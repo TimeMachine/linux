@@ -1,58 +1,49 @@
 #include "sched.h"
 
-/*
- * stop-task scheduling class.
- *
- * The stop task is the highest priority task in the system, it preempts
- * everything and will be preempted by nothing.
- *
- * See kernel/stop_machine.c
- */
-
 #ifdef CONFIG_SMP
 static int
-select_task_rq_stop(struct task_struct *p, int sd_flag, int flags)
+select_task_rq_energy(struct task_struct *p, int sd_flag, int flags)
 {
-	return task_cpu(p); /* stop tasks as never migrate */
+	return task_cpu(p); 
 }
 #endif /* CONFIG_SMP */
 
 static void
-check_preempt_curr_stop(struct rq *rq, struct task_struct *p, int flags)
+check_preempt_curr_energy(struct rq *rq, struct task_struct *p, int flags)
 {
 	/* we're never preempted */
 }
 
-static struct task_struct *pick_next_task_stop(struct rq *rq)
+static struct task_struct *pick_next_task_energy(struct rq *rq)
 {
-	struct task_struct *stop = rq->stop;
+	struct task_struct *energy = rq->energy;
 
-	if (stop && stop->on_rq) {
-		stop->se.exec_start = rq->clock_task;
-		return stop;
+	if (energy && energy->on_rq) {
+		energy->se.exec_start = rq->clock_task;
+		return energy;
 	}
 
 	return NULL;
 }
 
 static void
-enqueue_task_stop(struct rq *rq, struct task_struct *p, int flags)
+enqueue_task_energy(struct rq *rq, struct task_struct *p, int flags)
 {
 	inc_nr_running(rq);
 }
 
 static void
-dequeue_task_stop(struct rq *rq, struct task_struct *p, int flags)
+dequeue_task_energy(struct rq *rq, struct task_struct *p, int flags)
 {
 	dec_nr_running(rq);
 }
 
-static void yield_task_stop(struct rq *rq)
+static void yield_task_energy(struct rq *rq)
 {
-	BUG(); /* the stop task should never yield, its pointless. */
+
 }
 
-static void put_prev_task_stop(struct rq *rq, struct task_struct *prev)
+static void put_prev_task_energy(struct rq *rq, struct task_struct *prev)
 {
 	struct task_struct *curr = rq->curr;
 	u64 delta_exec;
@@ -71,58 +62,53 @@ static void put_prev_task_stop(struct rq *rq, struct task_struct *prev)
 	cpuacct_charge(curr, delta_exec);
 }
 
-static void task_tick_stop(struct rq *rq, struct task_struct *curr, int queued)
+static void task_tick_energy(struct rq *rq, struct task_struct *curr, int queued)
 {
 }
 
-static void set_curr_task_stop(struct rq *rq)
+static void set_curr_task_energy(struct rq *rq)
 {
-	struct task_struct *stop = rq->stop;
+	struct task_struct *energy = rq->energy;
 
-	stop->se.exec_start = rq->clock_task;
+	energy->se.exec_start = rq->clock_task;
 }
 
-static void switched_to_stop(struct rq *rq, struct task_struct *p)
+static void switched_to_energy(struct rq *rq, struct task_struct *p)
 {
-	BUG(); /* its impossible to change to this class */
 }
 
 static void
-prio_changed_stop(struct rq *rq, struct task_struct *p, int oldprio)
+prio_changed_energy(struct rq *rq, struct task_struct *p, int oldprio)
 {
-	BUG(); /* how!?, what priority? */
 }
 
 static unsigned int
-get_rr_interval_stop(struct rq *rq, struct task_struct *task)
+get_rr_interval_energy(struct rq *rq, struct task_struct *task)
 {
 	return 0;
 }
 
-/*
- * Simple, special scheduling class for the per-CPU stop tasks:
- */
-const struct sched_class stop_sched_class = {
+const struct sched_class energy_sched_class = {
 	.next			= &rt_sched_class,
 
-	.enqueue_task		= enqueue_task_stop,
-	.dequeue_task		= dequeue_task_stop,
-	.yield_task		= yield_task_stop,
+	.enqueue_task		= enqueue_task_energy,
+	.dequeue_task		= dequeue_task_energy,
+	.yield_task		= yield_task_energy,
 
-	.check_preempt_curr	= check_preempt_curr_stop,
+	.check_preempt_curr	= check_preempt_curr_energy,
 
-	.pick_next_task		= pick_next_task_stop,
-	.put_prev_task		= put_prev_task_stop,
+	.pick_next_task		= pick_next_task_energy,
+	.put_prev_task		= put_prev_task_energy,
 
 #ifdef CONFIG_SMP
-	.select_task_rq		= select_task_rq_stop,
+	.select_task_rq		= select_task_rq_energy,
 #endif
 
-	.set_curr_task          = set_curr_task_stop,
-	.task_tick		= task_tick_stop,
+	.set_curr_task          = set_curr_task_energy,
+	.task_tick		= task_tick_energy,
 
-	.get_rr_interval	= get_rr_interval_stop,
+	.get_rr_interval	= get_rr_interval_energy,
 
-	.prio_changed		= prio_changed_stop,
-	.switched_to		= switched_to_stop,
+	.prio_changed		= prio_changed_energy,
+	.switched_to		= switched_to_energy,
 };
