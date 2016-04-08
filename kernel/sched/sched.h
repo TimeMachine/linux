@@ -309,6 +309,13 @@ struct rt_rq {
 #endif
 };
 
+/* energy-credit based scheduler  |runqueues */
+struct energy_rq {
+	unsigned long energy_nr_running;
+	struct rq *rq;
+	struct list_head queue;
+};
+
 #ifdef CONFIG_SMP
 
 /*
@@ -370,6 +377,7 @@ struct rq {
 
 	struct cfs_rq cfs;
 	struct rt_rq rt;
+	struct energy_rq energy;
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	/* list of leaf cfs_rq on this cpu: */
@@ -387,7 +395,7 @@ struct rq {
 	 */
 	unsigned long nr_uninterruptible;
 
-	struct task_struct *curr, *idle, *stop, *energy;
+	struct task_struct *curr, *idle, *stop;
 	unsigned long next_balance;
 	struct mm_struct *prev_mm;
 

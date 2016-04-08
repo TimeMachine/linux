@@ -39,6 +39,7 @@
 #define SCHED_BATCH		3
 /* SCHED_ISO: reserved but not implemented yet */
 #define SCHED_IDLE		5
+#define SCHED_ENERGY	6
 /* Can be ORed in to make sure the process is reverted back to SCHED_NORMAL on fork */
 #define SCHED_RESET_ON_FORK     0x40000000
 
@@ -1252,6 +1253,20 @@ struct sched_rt_entity {
 #endif
 };
 
+/* energy-credit based scheduler  |task entity */
+struct sched_energy_entity {
+	//statistics
+	u64 timeslice_start;
+	u64 timeslice_execution[NR_CPUS];	
+	u64 total_execution;
+
+	u64 workload; // prediction
+	u64 credit[NR_CPUS]; // calculate	
+	// queue 
+	struct energy_rq *rq_e;
+	struct list_head list_item;
+};
+
 /*
  * default timeslice is 100 msecs (used only for SCHED_RR tasks).
  * Timeslices get refilled after they expire.
@@ -1285,6 +1300,7 @@ struct task_struct {
 	const struct sched_class *sched_class;
 	struct sched_entity se;
 	struct sched_rt_entity rt;
+	struct sched_energy_entity ee;
 #ifdef CONFIG_CGROUP_SCHED
 	struct task_group *sched_task_group;
 #endif

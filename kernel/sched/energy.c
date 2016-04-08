@@ -1,49 +1,7 @@
 #include "sched.h"
+#define _debug
 
-#ifdef CONFIG_SMP
-static int
-select_task_rq_energy(struct task_struct *p, int sd_flag, int flags)
-{
-	return task_cpu(p); 
-}
-#endif /* CONFIG_SMP */
-
-static void
-check_preempt_curr_energy(struct rq *rq, struct task_struct *p, int flags)
-{
-	/* we're never preempted */
-}
-
-static struct task_struct *pick_next_task_energy(struct rq *rq)
-{
-	struct task_struct *energy = rq->energy;
-
-	if (energy && energy->on_rq) {
-		energy->se.exec_start = rq->clock_task;
-		return energy;
-	}
-
-	return NULL;
-}
-
-static void
-enqueue_task_energy(struct rq *rq, struct task_struct *p, int flags)
-{
-	inc_nr_running(rq);
-}
-
-static void
-dequeue_task_energy(struct rq *rq, struct task_struct *p, int flags)
-{
-	dec_nr_running(rq);
-}
-
-static void yield_task_energy(struct rq *rq)
-{
-
-}
-
-static void put_prev_task_energy(struct rq *rq, struct task_struct *prev)
+static void update_curr_energy(struct rq *rq)
 {
 	struct task_struct *curr = rq->curr;
 	u64 delta_exec;
@@ -62,19 +20,111 @@ static void put_prev_task_energy(struct rq *rq, struct task_struct *prev)
 	cpuacct_charge(curr, delta_exec);
 }
 
+static inline int on_energy_rq(struct sched_energy_entity *ee)
+{
+    return !list_empty(&ee->list_item);
+}
+
+
+#ifdef CONFIG_SMP
+static int
+select_task_rq_energy(struct task_struct *p, int sd_flag, int flags)
+{
+	return task_cpu(p); 
+}
+#endif /* CONFIG_SMP */
+
+static void
+check_preempt_curr_energy(struct rq *rq, struct task_struct *p, int flags)
+{
+	/* we're never preempted */
+}
+
+static struct task_struct *pick_next_task_energy(struct rq *rq)
+{
+	struct task_struct *next;
+	struct sched_energy_entity *next_ee;
+	struct energy_rq *e_rq = &(rq->energy);
+	if(e_rq->energy_nr_running == 0)
+		return NULL;
+	next_ee = list_entry(e_rq->queue.next, struct sched_energy_entity, list_item);
+	next = container_of(next_ee, struct task_struct, ee);
+	next->se.exec_start = rq->clock_task;
+#ifdef _debug
+	printk("%s end\n",__PRETTY_FUNCTION__);
+#endif
+	return next;
+}
+
+static void
+enqueue_task_energy(struct rq *rq, struct task_struct *p, int flags)
+{
+#ifdef _debug
+	printk("%s begin\n",__PRETTY_FUNCTION__);
+#endif
+	list_add_tail(&(p->ee.list_item),&(rq->energy.queue));
+	p->ee.rq_e = &rq->energy;
+	rq->energy.energy_nr_running++;
+	inc_nr_running(rq);
+#ifdef _debug
+	printk("%s end\n",__PRETTY_FUNCTION__);
+#endif
+}
+
+static void
+dequeue_task_energy(struct rq *rq, struct task_struct *p, int flags)
+{
+#ifdef _debug
+	printk("%s begin\n",__PRETTY_FUNCTION__);
+#endif
+	update_curr_energy(rq);
+	list_del(&(p->ee.list_item));
+	rq->energy.energy_nr_running--;
+	dec_nr_running(rq);
+#ifdef _debug
+	printk("%s end\n",__PRETTY_FUNCTION__);
+#endif
+}
+
+static void requeue_task_energy(struct rq *rq, struct task_struct *p)
+{
+	if (on_energy_rq(&p->ee)) {
+		list_move_tail(&p->ee.list_item, &rq->energy.queue);
+	}
+}
+
+static void yield_task_energy(struct rq *rq)
+{
+	requeue_task_energy(rq,rq->curr);
+}
+
+static void put_prev_task_energy(struct rq *rq, struct task_struct *prev)
+{
+#ifdef _debug
+	printk("%s begin\n",__PRETTY_FUNCTION__);
+#endif
+	update_curr_energy(rq);
+	prev->se.exec_start = 0;
+#ifdef _debug
+	printk("%s end\n",__PRETTY_FUNCTION__);
+#endif
+}
+
 static void task_tick_energy(struct rq *rq, struct task_struct *curr, int queued)
 {
 }
 
 static void set_curr_task_energy(struct rq *rq)
 {
-	struct task_struct *energy = rq->energy;
+	struct task_struct *p = rq->curr;
 
-	energy->se.exec_start = rq->clock_task;
+	p->se.exec_start = rq->clock_task;
 }
 
 static void switched_to_energy(struct rq *rq, struct task_struct *p)
 {
+	if (rq->curr == p)
+		resched_task(rq->curr);	
 }
 
 static void

@@ -1722,6 +1722,8 @@ static void __sched_fork(struct task_struct *p)
 
 	INIT_LIST_HEAD(&p->rt.run_list);
 
+	INIT_LIST_HEAD(&p->ee.list_item);
+
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	INIT_HLIST_HEAD(&p->preempt_notifiers);
 #endif
@@ -1769,7 +1771,7 @@ void sched_fork(struct task_struct *p)
 		p->sched_reset_on_fork = 0;
 	}
 
-	if (!rt_prio(p->prio))
+	if ((!rt_prio(p->prio)) && (p->sched_class != &energy_sched_class))
 		p->sched_class = &fair_sched_class;
 
 	if (p->sched_class->task_fork)
@@ -4225,6 +4227,8 @@ __setscheduler(struct rq *rq, struct task_struct *p, int policy, int prio)
 	p->prio = rt_mutex_getprio(p);
 	if (rt_prio(p->prio))
 		p->sched_class = &rt_sched_class;
+	else if(policy == SCHED_ENERGY)
+		p->sched_class = &energy_sched_class;
 	else
 		p->sched_class = &fair_sched_class;
 	set_load_weight(p);
@@ -4271,7 +4275,7 @@ recheck:
 
 		if (policy != SCHED_FIFO && policy != SCHED_RR &&
 				policy != SCHED_NORMAL && policy != SCHED_BATCH &&
-				policy != SCHED_IDLE)
+				policy != SCHED_IDLE && policy != SCHED_ENERGY)
 			return -EINVAL;
 	}
 
@@ -7113,6 +7117,14 @@ int in_sched_functions(unsigned long addr)
 		&& addr < (unsigned long)__sched_text_end);
 }
 
+void init_energy_rq(struct rq *rq)
+{
+	struct energy_rq *e_rq = &rq->energy;
+	INIT_LIST_HEAD(&e_rq->queue);
+	e_rq->energy_nr_running = 0;
+	e_rq->rq = rq;
+}
+
 #ifdef CONFIG_CGROUP_SCHED
 struct task_group root_task_group;
 LIST_HEAD(task_groups);
@@ -7197,6 +7209,10 @@ void __init sched_init(void)
 		rq->calc_load_update = jiffies + LOAD_FREQ;
 		init_cfs_rq(&rq->cfs);
 		init_rt_rq(&rq->rt, rq);
+		
+		// energy-credit scheduler init
+		init_energy_rq(rq);
+		
 #ifdef CONFIG_FAIR_GROUP_SCHED
 		root_task_group.shares = ROOT_TASK_GROUP_LOAD;
 		INIT_LIST_HEAD(&rq->leaf_cfs_rq_list);
