@@ -5,7 +5,16 @@ static void update_curr_energy(struct rq *rq)
 {
 	struct task_struct *curr = rq->curr;
 	u64 delta_exec;
-
+	u64 e_exec;
+	
+	//update energy info.
+	e_exec = rq->clock_task - curr->ee.timeslice_start;
+	if (unlikely((s64)e_exec < 0))
+		e_exec = 0;
+	curr->ee.timeslice_execution[rq->cpu] += e_exec;
+	curr->ee.total_execution += e_exec;		
+	
+	//update curr info.
 	delta_exec = rq->clock_task - curr->se.exec_start;
 	if (unlikely((s64)delta_exec < 0))
 		delta_exec = 0;
@@ -104,14 +113,66 @@ static void put_prev_task_energy(struct rq *rq, struct task_struct *prev)
 	printk("%s begin\n",__PRETTY_FUNCTION__);
 #endif
 	update_curr_energy(rq);
-	prev->se.exec_start = 0;
+	//prev->se.exec_start = 0;
 #ifdef _debug
 	printk("%s end\n",__PRETTY_FUNCTION__);
 #endif
 }
 
+static void workload_prediction(void)
+{
+	
+}
+
+static void algo(void)
+{
+	
+}
+
+static void get_cpu_frequency(void)
+{
+	
+}
+
+static void set_cpu_frequency(void)
+{
+	
+}
+
 static void task_tick_energy(struct rq *rq, struct task_struct *curr, int queued)
 {
+	int cpu = smp_processor_id();
+	if (cpu == 0) {
+		struct energy_rq *e_rq;
+		struct task_struct *i_curr;
+		struct list_head *head;
+		struct list_head *pos;
+		struct sched_energy_entity *data;
+		u64 delta_exec;
+		int i = 0;
+		
+		for (i = 0 ;i < NR_CPUS; i++) {
+			e_rq = &cpu_rq(i)->energy;
+			if (e_rq->energy_nr_running != 0) {
+				// update per CPU's current execution job info.
+				i_curr = cpu_rq(i)->curr;
+				delta_exec = rq->clock_task - i_curr->ee.timeslice_start;
+				i_curr->ee.timeslice_execution[i] += delta_exec;
+				i_curr->ee.total_execution += delta_exec;		
+				
+				// update all job start time.	
+				head = &e_rq->queue;
+				for (pos = head->next; pos != head; pos = pos->next) {
+					data = list_entry(pos, struct sched_energy_entity, list_item);
+					data->timeslice_start = rq->clock_task;
+				}
+			}
+		}	
+		get_cpu_frequency();
+		workload_prediction();
+		algo();
+		set_cpu_frequency();
+	}
 }
 
 static void set_curr_task_energy(struct rq *rq)
