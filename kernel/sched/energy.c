@@ -1,4 +1,7 @@
 #include "sched.h"
+//#include "../../drivers/cpufreq/cpufreq_stats.c"
+#include <linux/cpufreq.h>
+#include <linux/module.h>
 #define _debug
 
 static void update_curr_energy(struct rq *rq)
@@ -128,10 +131,24 @@ static void algo(void)
 {
 	
 }
-
+extern unsigned int get_stats_table(int cpu, unsigned int **freq);
 static void get_cpu_frequency(void)
 {
-	
+	unsigned int *freq = NULL;
+	int state_number = get_stats_table(0, &freq);
+	int i = 0;
+	for (i = 0; i < state_number; i++) {
+		printk("fre[%d] %d\n", i, freq[i]);
+	}
+	//intk("%d",cpufreq_stats_table->cpu);
+	/*
+	int i;
+	stat = get_freq_stats_table(0);
+	for (i = 0; i < stat->state_num; i++) {
+		printk("%u \n", stat->freq_table[i]);
+	}
+*/
+
 }
 
 static void set_cpu_frequency(void)

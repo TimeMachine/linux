@@ -21,7 +21,7 @@
 #include <linux/spinlock.h>
 #include <linux/notifier.h>
 #include <asm/cputime.h>
-
+#include <linux/module.h>
 static spinlock_t cpufreq_stats_lock;
 
 #define CPUFREQ_STATDEVICE_ATTR(_name, _mode, _show) \
@@ -50,6 +50,14 @@ struct cpufreq_stats_attribute {
 	struct attribute attr;
 	ssize_t(*show) (struct cpufreq_stats *, char *);
 };
+
+unsigned int get_stats_table(int cpu, unsigned int **freq)
+{
+	*freq = per_cpu(cpufreq_stats_table, cpu)->freq_table;
+	return per_cpu(cpufreq_stats_table, cpu)->state_num;
+}
+EXPORT_SYMBOL(get_stats_table);
+//EXPORT_SYMBOL(cpufreq_stats_table);
 
 static int cpufreq_stats_update(unsigned int cpu)
 {
