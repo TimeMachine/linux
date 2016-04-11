@@ -1,8 +1,9 @@
 #include "sched.h"
-//#include "../../drivers/cpufreq/cpufreq_stats.c"
 #include <linux/cpufreq.h>
-#include <linux/module.h>
 #define _debug
+
+
+static void main_schedule(void);
 
 static void update_curr_energy(struct rq *rq)
 {
@@ -10,14 +11,14 @@ static void update_curr_energy(struct rq *rq)
 	u64 delta_exec;
 	u64 e_exec;
 	
-	//update energy info.
-	e_exec = rq->clock_task - curr->ee.timeslice_start;
+	//update the energy info.
+	e_exec = rq->clock_task - curr->ee.execute_start;
 	if (unlikely((s64)e_exec < 0))
 		e_exec = 0;
-	curr->ee.timeslice_execution[rq->cpu] += e_exec;
 	curr->ee.total_execution += e_exec;		
-	
-	//update curr info.
+	curr->ee.execute_start = rq->clock_task;
+
+	//update the curr info.		
 	delta_exec = rq->clock_task - curr->se.exec_start;
 	if (unlikely((s64)delta_exec < 0))
 		delta_exec = 0;
@@ -62,6 +63,7 @@ static struct task_struct *pick_next_task_energy(struct rq *rq)
 	next_ee = list_entry(e_rq->queue.next, struct sched_energy_entity, list_item);
 	next = container_of(next_ee, struct task_struct, ee);
 	next->se.exec_start = rq->clock_task;
+	next->ee.execute_start = rq->clock_task;
 #ifdef _debug
 	printk("%s end\n",__PRETTY_FUNCTION__);
 #endif
@@ -78,6 +80,7 @@ enqueue_task_energy(struct rq *rq, struct task_struct *p, int flags)
 	p->ee.rq_e = &rq->energy;
 	rq->energy.energy_nr_running++;
 	inc_nr_running(rq);
+	main_schedule();
 #ifdef _debug
 	printk("%s end\n",__PRETTY_FUNCTION__);
 #endif
@@ -93,6 +96,7 @@ dequeue_task_energy(struct rq *rq, struct task_struct *p, int flags)
 	list_del(&(p->ee.list_item));
 	rq->energy.energy_nr_running--;
 	dec_nr_running(rq);
+	main_schedule();
 #ifdef _debug
 	printk("%s end\n",__PRETTY_FUNCTION__);
 #endif
@@ -108,6 +112,7 @@ static void requeue_task_energy(struct rq *rq, struct task_struct *p)
 static void yield_task_energy(struct rq *rq)
 {
 	requeue_task_energy(rq,rq->curr);
+	main_schedule();
 }
 
 static void put_prev_task_energy(struct rq *rq, struct task_struct *prev)
@@ -131,24 +136,17 @@ static void algo(void)
 {
 	
 }
-extern unsigned int get_stats_table(int cpu, unsigned int **freq);
-static void get_cpu_frequency(void)
-{
-	unsigned int *freq = NULL;
-	int state_number = get_stats_table(0, &freq);
-	int i = 0;
-	for (i = 0; i < state_number; i++) {
-		printk("fre[%d] %d\n", i, freq[i]);
-	}
-	//intk("%d",cpufreq_stats_table->cpu);
-	/*
-	int i;
-	stat = get_freq_stats_table(0);
-	for (i = 0; i < stat->state_num; i++) {
-		printk("%u \n", stat->freq_table[i]);
-	}
-*/
 
+extern unsigned int get_stats_table(int cpu, unsigned int **freq);
+static void get_cpu_frequency(int cpu)
+{
+	struct energy_rq *e_rq = &cpu_rq(cpu)->energy;
+	int i = 0;
+	e_rq->state_number = get_stats_table(0, &e_rq->freq);		
+	for (i = 0; i < e_rq->state_number; i++) {
+		printk("cpu:%d  freq[%d] %d\n", cpu, i, e_rq->freq[i]);
+	}
+		
 }
 
 static void set_cpu_frequency(void)
@@ -156,39 +154,43 @@ static void set_cpu_frequency(void)
 	
 }
 
+static void main_schedule(void)
+{
+	u64 slice_start =  cpu_rq(0)->clock_task;
+	struct rq *i_rq;
+	int i = 0;
+	printk("%s\n",__PRETTY_FUNCTION__);
+	// update all job data and then use them to predict.
+	for (i = 0 ;i < NR_CPUS; i++) {
+		i_rq = cpu_rq(i);
+		if (i_rq->energy.energy_nr_running != 0)
+			update_curr_energy(i_rq);
+		i_rq->energy.timeslice_start = slice_start;
+		
+		// for the first time (init cpu freq)
+		if (unlikely(i_rq->energy.freq == NULL))
+			get_cpu_frequency(i);
+	}	
+	workload_prediction();
+	algo();
+	set_cpu_frequency();
+}
+
 static void task_tick_energy(struct rq *rq, struct task_struct *curr, int queued)
 {
 	int cpu = smp_processor_id();
 	if (cpu == 0) {
-		struct energy_rq *e_rq;
-		struct task_struct *i_curr;
-		struct list_head *head;
-		struct list_head *pos;
-		struct sched_energy_entity *data;
-		u64 delta_exec;
-		int i = 0;
-		
-		for (i = 0 ;i < NR_CPUS; i++) {
-			e_rq = &cpu_rq(i)->energy;
-			if (e_rq->energy_nr_running != 0) {
-				// update per CPU's current execution job info.
-				i_curr = cpu_rq(i)->curr;
-				delta_exec = rq->clock_task - i_curr->ee.timeslice_start;
-				i_curr->ee.timeslice_execution[i] += delta_exec;
-				i_curr->ee.total_execution += delta_exec;		
-				
-				// update all job start time.	
-				head = &e_rq->queue;
-				for (pos = head->next; pos != head; pos = pos->next) {
-					data = list_entry(pos, struct sched_energy_entity, list_item);
-					data->timeslice_start = rq->clock_task;
-				}
-			}
-		}	
-		get_cpu_frequency();
-		workload_prediction();
-		algo();
-		set_cpu_frequency();
+		if (rq->clock_task - rq->energy.timeslice_start >= NSEC_PER_SEC) {
+#ifdef _debug
+			printk("%s begin\n",__PRETTY_FUNCTION__);
+#endif
+			printk("clock: %llu |timeslice:%llu |HZ:%u\n",rq->clock_task, rq->energy.timeslice_start ,HZ);
+			// reschedule because of the time slice 
+			main_schedule();
+#ifdef _debug
+			printk("%s end\n",__PRETTY_FUNCTION__);
+#endif
+		}
 	}
 }
 

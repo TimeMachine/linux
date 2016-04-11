@@ -1256,8 +1256,8 @@ struct sched_rt_entity {
 /* energy-credit based scheduler  |task entity */
 struct sched_energy_entity {
 	//statistics
-	u64 timeslice_start;
-	u64 timeslice_execution[NR_CPUS];	
+	u64 execute_start;
+	//u64 timeslice_execution[NR_CPUS];	
 	u64 total_execution;
 
 	u64 workload; // prediction

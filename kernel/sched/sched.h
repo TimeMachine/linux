@@ -314,6 +314,9 @@ struct energy_rq {
 	unsigned long energy_nr_running;
 	struct rq *rq;
 	struct list_head queue;
+	u64 timeslice_start;
+	unsigned int *freq;
+	int state_number;
 };
 
 #ifdef CONFIG_SMP

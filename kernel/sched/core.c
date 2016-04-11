@@ -7122,7 +7122,10 @@ void init_energy_rq(struct rq *rq)
 	struct energy_rq *e_rq = &rq->energy;
 	INIT_LIST_HEAD(&e_rq->queue);
 	e_rq->energy_nr_running = 0;
+	e_rq->timeslice_start = 0;
 	e_rq->rq = rq;
+	e_rq->freq = NULL;
+	e_rq->state_number = 0;
 }
 
 #ifdef CONFIG_CGROUP_SCHED
@@ -7210,9 +7213,6 @@ void __init sched_init(void)
 		init_cfs_rq(&rq->cfs);
 		init_rt_rq(&rq->rt, rq);
 		
-		// energy-credit scheduler init
-		init_energy_rq(rq);
-		
 #ifdef CONFIG_FAIR_GROUP_SCHED
 		root_task_group.shares = ROOT_TASK_GROUP_LOAD;
 		INIT_LIST_HEAD(&rq->leaf_cfs_rq_list);
@@ -7272,6 +7272,9 @@ void __init sched_init(void)
 #endif
 		init_rq_hrtick(rq);
 		atomic_set(&rq->nr_iowait, 0);
+		
+		// energy-credit scheduler init
+		init_energy_rq(rq);
 	}
 
 	set_load_weight(&init_task);
