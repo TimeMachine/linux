@@ -1725,6 +1725,39 @@ error_out:
 	return ret;
 }
 
+void change_governor_userspace(int cpu)
+{
+	struct cpufreq_policy *data = cpufreq_cpu_get(cpu);
+	struct cpufreq_policy policy;
+	
+	lock_policy_rwsem_write(cpu);
+	memcpy(&policy, data, sizeof(struct cpufreq_policy));
+	policy.min = data->min;
+	policy.max = data->max;
+	policy.policy = 0;
+	policy.governor = __find_governor("userspace");
+
+	/* BIOS might change freq behind our back
+	  -> ask driver for current freq and notify governors about a change */
+	if (cpufreq_driver->get) {
+		policy.cur = cpufreq_driver->get(cpu);
+		if (!data->cur) {
+			pr_debug("Driver did not initialize current freq");
+			data->cur = policy.cur;
+		} else {
+			if (data->cur != policy.cur)
+				cpufreq_out_of_sync(cpu, data->cur,
+								policy.cur);
+		}
+	}
+
+	__cpufreq_set_policy(data, &policy);
+	unlock_policy_rwsem_write(cpu);
+
+	cpufreq_cpu_put(data);
+}
+EXPORT_SYMBOL(change_governor_userspace);
+
 /**
  *	cpufreq_update_policy - re-evaluate an existing cpufreq policy
  *	@cpu: CPU which shall be re-evaluated

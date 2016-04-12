@@ -138,10 +138,15 @@ static void algo(void)
 }
 
 extern unsigned int get_stats_table(int cpu, unsigned int **freq);
+extern void change_governor_userspace(int cpu);
+
 static void get_cpu_frequency(int cpu)
 {
 	struct energy_rq *e_rq = &cpu_rq(cpu)->energy;
-	int i = 0;
+	int i = 0;	
+
+	change_governor_userspace(cpu);
+
 	e_rq->state_number = get_stats_table(0, &e_rq->freq);		
 	for (i = 0; i < e_rq->state_number; i++) {
 		printk("cpu:%d  freq[%d] %d\n", cpu, i, e_rq->freq[i]);
