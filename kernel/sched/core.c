@@ -1722,7 +1722,11 @@ static void __sched_fork(struct task_struct *p)
 
 	INIT_LIST_HEAD(&p->rt.run_list);
 
+	//init energy task info.
 	INIT_LIST_HEAD(&p->ee.list_item);
+	p->ee.execute_start = 0;
+	p->ee.total_execution = 0;
+	p->ee.instance = p;
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	INIT_HLIST_HEAD(&p->preempt_notifiers);

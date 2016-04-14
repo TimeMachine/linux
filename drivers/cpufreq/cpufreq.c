@@ -241,7 +241,7 @@ void cpufreq_notify_transition(struct cpufreq_freqs *freqs, unsigned int state)
 {
 	struct cpufreq_policy *policy;
 
-	BUG_ON(irqs_disabled());
+	//BUG_ON(irqs_disabled());
 
 	freqs->flags = cpufreq_driver->flags;
 	pr_debug("notification %u of frequency transition to %u kHz\n",

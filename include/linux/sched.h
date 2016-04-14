@@ -1263,6 +1263,7 @@ struct sched_energy_entity {
 	u64 workload; // prediction
 	u64 credit[NR_CPUS]; // calculate	
 	int state; // 0: under 1: over
+	struct task_struct *instance;
 	// queue 
 	struct energy_rq *rq_e;
 	struct list_head list_item;

@@ -1,9 +1,10 @@
 #include "sched.h"
 #include <linux/cpufreq.h>
-#define _debug
+//#define _debug
 
 
 static void main_schedule(void);
+static void set_cpu_frequency(unsigned int cpu, unsigned int freq);
 
 static void update_curr_energy(struct rq *rq)
 {
@@ -12,10 +13,13 @@ static void update_curr_energy(struct rq *rq)
 	u64 e_exec;
 	
 	//update the energy info.
-	e_exec = rq->clock_task - curr->ee.execute_start;
-	if (unlikely((s64)e_exec < 0))
-		e_exec = 0;
-	curr->ee.total_execution += e_exec;		
+	if (curr->ee.execute_start != 0) {
+		e_exec = rq->clock_task - curr->ee.execute_start;
+		if (unlikely((s64)e_exec < 0))
+			e_exec = 0;
+		curr->ee.total_execution += e_exec;
+	}		
+	printk("clock:%llu, cpu_load:%lu\n", rq->clock, rq->cpu_load[0]);
 	curr->ee.execute_start = rq->clock_task;
 
 	//update the curr info.		
@@ -129,7 +133,29 @@ static void put_prev_task_energy(struct rq *rq, struct task_struct *prev)
 
 static void workload_prediction(void)
 {
-	
+	struct rq *i_rq;
+	int i = 0;
+	struct list_head *head;
+	struct sched_energy_entity *data;
+	struct list_head *pos;
+	for (i = 0 ;i < NR_CPUS; i++) {
+		i_rq = cpu_rq(i);
+		if (i_rq->energy.energy_nr_running != 0) {
+			head = &i_rq->energy.queue;
+			for(pos = head->next; pos != head; pos = pos->next) {
+				data = list_entry(pos ,struct sched_energy_entity, list_item);
+				// predict workload from the statics.
+				printk("pid:%d, cpu:%d, exeute_start:%llu, total_execution:%llu, workload:%llu\n",data->instance->pid , i, data->execute_start ,data->total_execution, data->workload);
+				// for the newly job
+				if (data->workload == 0)
+					data->workload = i_rq->energy.freq[0]; 
+				else 
+					data->workload = data->total_execution;
+				// reset the statics.
+				data->total_execution = 0;
+			}
+		}
+	}
 }
 
 static void algo(void)
@@ -138,25 +164,26 @@ static void algo(void)
 }
 
 extern unsigned int get_stats_table(int cpu, unsigned int **freq);
-extern void change_governor_userspace(int cpu);
+//extern void change_governor_userspace(int cpu);
+extern struct cpufreq_policy *cpufreq_cpu_get(unsigned int cpu);
 
 static void get_cpu_frequency(int cpu)
 {
 	struct energy_rq *e_rq = &cpu_rq(cpu)->energy;
-	int i = 0;	
+	//int i = 0;	
 
-	change_governor_userspace(cpu);
+	//change_governor_userspace(cpu);
 
 	e_rq->state_number = get_stats_table(0, &e_rq->freq);		
-	for (i = 0; i < e_rq->state_number; i++) {
+	/*for (i = 0; i < e_rq->state_number; i++) {
 		printk("cpu:%d  freq[%d] %d\n", cpu, i, e_rq->freq[i]);
-	}
-		
+	}*/
 }
 
-static void set_cpu_frequency(void)
+static void set_cpu_frequency(unsigned int cpu, unsigned int freq)
 {
-	
+	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);		
+	policy->governor->store_setspeed(policy, freq);
 }
 
 static void main_schedule(void)
@@ -178,7 +205,7 @@ static void main_schedule(void)
 	}	
 	workload_prediction();
 	algo();
-	set_cpu_frequency();
+	//set_cpu_frequency(0, cpu_rq(0)->energy.freq[4]);	
 }
 
 static void task_tick_energy(struct rq *rq, struct task_struct *curr, int queued)
