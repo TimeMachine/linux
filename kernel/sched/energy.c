@@ -10,17 +10,14 @@ static void update_curr_energy(struct rq *rq)
 {
 	struct task_struct *curr = rq->curr;
 	u64 delta_exec;
-	u64 e_exec;
 	
 	//update the energy info.
 	if (curr->ee.execute_start != 0) {
-		e_exec = rq->clock_task - curr->ee.execute_start;
-		if (unlikely((s64)e_exec < 0))
-			e_exec = 0;
-		curr->ee.total_execution += e_exec;
+		curr->ee.total_execution += cpu_cycle() - curr->ee.execute_start;
 	}		
-	printk("clock:%llu, cpu_load:%lu\n", rq->clock, rq->cpu_load[0]);
-	curr->ee.execute_start = rq->clock_task;
+	//printk("clock:%llu, cpu_load:%lu\n", rq->clock, rq->cpu_load[0]);
+	//printk("cyc:%llu\n", cpu_cycle());
+	curr->ee.execute_start = cpu_cycle();
 
 	//update the curr info.		
 	delta_exec = rq->clock_task - curr->se.exec_start;
@@ -67,7 +64,7 @@ static struct task_struct *pick_next_task_energy(struct rq *rq)
 	next_ee = list_entry(e_rq->queue.next, struct sched_energy_entity, list_item);
 	next = container_of(next_ee, struct task_struct, ee);
 	next->se.exec_start = rq->clock_task;
-	next->ee.execute_start = rq->clock_task;
+	next->ee.execute_start = cpu_cycle();
 #ifdef _debug
 	printk("%s end\n",__PRETTY_FUNCTION__);
 #endif
@@ -145,10 +142,10 @@ static void workload_prediction(void)
 			for(pos = head->next; pos != head; pos = pos->next) {
 				data = list_entry(pos ,struct sched_energy_entity, list_item);
 				// predict workload from the statics.
-				printk("pid:%d, cpu:%d, exeute_start:%llu, total_execution:%llu, workload:%llu\n",data->instance->pid , i, data->execute_start ,data->total_execution, data->workload);
+				printk("pid:%d, cpu:%d, exeute_start:%u, total_execution:%u, workload:%u\n",data->instance->pid , i, data->execute_start ,data->total_execution, data->workload);
 				// for the newly job
-				if (data->workload == 0)
-					data->workload = i_rq->energy.freq[0]; 
+				if (data->total_execution == 0)
+					data->workload = i_rq->energy.freq[0] * 1000; // kHz -> Hz
 				else 
 					data->workload = data->total_execution;
 				// reset the statics.

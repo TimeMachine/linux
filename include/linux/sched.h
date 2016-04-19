@@ -1256,12 +1256,12 @@ struct sched_rt_entity {
 /* energy-credit based scheduler  |task entity */
 struct sched_energy_entity {
 	//statistics
-	u64 execute_start;
+	u32 execute_start;
 	//u64 timeslice_execution[NR_CPUS];	
-	u64 total_execution;
+	u32 total_execution;
 
-	u64 workload; // prediction
-	u64 credit[NR_CPUS]; // calculate	
+	u32 workload; // prediction
+	u32 credit[NR_CPUS]; // calculate	
 	int state; // 0: under 1: over
 	struct task_struct *instance;
 	// queue 
@@ -1987,6 +1987,7 @@ static inline int set_cpus_allowed(struct task_struct *p, cpumask_t new_mask)
  * Please use one of the three interfaces below.
  */
 extern unsigned long long notrace sched_clock(void);
+extern u32 notrace cpu_cycle(void);
 /*
  * See the comment in kernel/sched_clock.c
  */
