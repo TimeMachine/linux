@@ -18,6 +18,7 @@ static void update_curr_energy(struct rq *rq)
 	//printk("clock:%llu, cpu_load:%lu\n", rq->clock, rq->cpu_load[0]);
 	//printk("cyc:%llu\n", cpu_cycle());
 	curr->ee.execute_start = cpu_cycle();
+	rq->energy.time_sharing = rq->clock_task;
 
 	//update the curr info.		
 	delta_exec = rq->clock_task - curr->se.exec_start;
@@ -142,7 +143,7 @@ static void workload_prediction(void)
 			for(pos = head->next; pos != head; pos = pos->next) {
 				data = list_entry(pos ,struct sched_energy_entity, list_item);
 				// predict workload from the statics.
-				printk("pid:%d, cpu:%d, exeute_start:%u, total_execution:%u, workload:%u\n",data->instance->pid , i, data->execute_start ,data->total_execution, data->workload);
+				//printk("pid:%d, cpu:%d, exeute_start:%u, total_execution:%u, workload:%u\n",data->instance->pid , i, data->execute_start ,data->total_execution, data->workload);
 				// for the newly job
 				if (data->total_execution == 0)
 					data->workload = i_rq->energy.freq[0] * 1000; // kHz -> Hz
@@ -188,7 +189,7 @@ static void main_schedule(void)
 	u64 slice_start =  cpu_rq(0)->clock_task;
 	struct rq *i_rq;
 	int i = 0;
-	printk("%s\n",__PRETTY_FUNCTION__);
+	//printk("%s\n",__PRETTY_FUNCTION__);
 	// update all job data and then use them to predict.
 	for (i = 0 ;i < NR_CPUS; i++) {
 		i_rq = cpu_rq(i);
@@ -208,18 +209,25 @@ static void main_schedule(void)
 static void task_tick_energy(struct rq *rq, struct task_struct *curr, int queued)
 {
 	int cpu = smp_processor_id();
-	if (cpu == 0) {
-		if (rq->clock_task - rq->energy.timeslice_start >= NSEC_PER_SEC) {
+	//printk("%s | cpu:%d, slice:%llu\n",__PRETTY_FUNCTION__, cpu, rq->clock_task - rq->energy.timeslice_start);
+	//over scheduling time slice:
+	if (rq->clock_task - rq->energy.timeslice_start >= NSEC_PER_SEC) {
 #ifdef _debug
-			printk("%s begin\n",__PRETTY_FUNCTION__);
+		printk("%s begin\n",__PRETTY_FUNCTION__);
 #endif
-			printk("clock: %llu |timeslice:%llu |HZ:%u\n",rq->clock_task, rq->energy.timeslice_start ,HZ);
-			// reschedule because of the time slice 
-			main_schedule();
+		printk("clock: %llu |timeslice:%llu |HZ:%u\n",rq->clock_task, rq->energy.timeslice_start ,HZ);
+		// reschedule because of the time slice 
+		main_schedule();
 #ifdef _debug
-			printk("%s end\n",__PRETTY_FUNCTION__);
+		printk("%s end\n",__PRETTY_FUNCTION__);
 #endif
-		}
+	} // time sharing
+	else if (rq->clock_task - rq->energy.time_sharing >= 30 * USEC_PER_SEC) {
+		printk("clock: %llu |timeslice:%llu |HZ:%u\n",rq->clock_task, rq->energy.time_sharing ,HZ);
+		rq->energy.time_sharing = rq->clock_task;
+		requeue_task_energy(rq,rq->curr);
+		resched_task(rq->curr);
+		return;		
 	}
 }
 

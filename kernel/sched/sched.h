@@ -315,6 +315,7 @@ struct energy_rq {
 	struct rq *rq;
 	struct list_head queue;
 	u64 timeslice_start;
+	u64 time_sharing;
 	unsigned int *freq;
 	int state_number;
 };
