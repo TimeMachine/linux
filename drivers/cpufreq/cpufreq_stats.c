@@ -53,8 +53,11 @@ struct cpufreq_stats_attribute {
 
 unsigned int get_stats_table(int cpu, unsigned int **freq)
 {
-	*freq = per_cpu(cpufreq_stats_table, cpu)->freq_table;
-	return per_cpu(cpufreq_stats_table, cpu)->state_num;
+	int c = cpu;
+	if(per_cpu(cpufreq_stats_table, cpu) == NULL)
+		c = 0;
+	*freq = per_cpu(cpufreq_stats_table, c)->freq_table;
+	return per_cpu(cpufreq_stats_table, c)->state_num;
 }
 EXPORT_SYMBOL(get_stats_table);
 //EXPORT_SYMBOL(cpufreq_stats_table);
