@@ -3,7 +3,12 @@
 #include <linux/slab.h>
 #include <linux/sort.h>
 //#define _debug
+#define _sched_debug
 #define kHZ 1000
+
+// lock by main_schedule
+//spinlock_t mr_lock = SPIN_LOCK_UNLOCKED;
+static DEFINE_SPINLOCK(mr_lock);
 
 static void main_schedule(int workload_predict);
 
@@ -24,10 +29,13 @@ static void get_cpu_frequency(int cpu)
 	}*/
 }
 
-static void set_cpu_frequency(unsigned int cpu, unsigned int freq)
+static void set_cpu_frequency(unsigned int c, unsigned int freq)
 {
+	int cpu = 0; //odroid-xu desgined.
 	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);		
-	policy->governor->store_setspeed(policy, freq);
+	__cpufreq_driver_target(policy, freq, CPUFREQ_RELATION_L);
+	//policy->governor->store_setspeed(policy, freq);
+	cpufreq_cpu_put(policy);
 }
 
 static void update_curr_energy(struct rq *rq)
@@ -117,7 +125,10 @@ enqueue_task_energy(struct rq *rq, struct task_struct *p, int flags)
 	p->ee.workload = rq->energy.freq[rq->energy.state_number / 2] * kHZ;
 	if (rq->energy.timeslice_start == 0)
 		rq->energy.timeslice_start = rq->clock_task;
-	main_schedule(false);
+	if (spin_trylock(&mr_lock)) {
+		main_schedule(false);
+		spin_unlock(&mr_lock);
+	}
 #ifdef _debug
 	printk("%s end\n",__PRETTY_FUNCTION__);
 #endif
@@ -133,7 +144,10 @@ dequeue_task_energy(struct rq *rq, struct task_struct *p, int flags)
 	list_del(&(p->ee.list_item));
 	rq->energy.energy_nr_running--;
 	dec_nr_running(rq);
-	main_schedule(false);
+	if (spin_trylock(&mr_lock)) {
+		main_schedule(false);
+		spin_unlock(&mr_lock);
+	}
 #ifdef _debug
 	printk("%s end\n",__PRETTY_FUNCTION__);
 #endif
@@ -149,7 +163,10 @@ static void requeue_task_energy(struct rq *rq, struct task_struct *p)
 static void yield_task_energy(struct rq *rq)
 {
 	requeue_task_energy(rq,rq->curr);
-	main_schedule(false);
+	if (spin_trylock(&mr_lock)) {
+		main_schedule(false);
+		spin_unlock(&mr_lock);
+	}
 }
 
 static void put_prev_task_energy(struct rq *rq, struct task_struct *prev)
@@ -178,7 +195,7 @@ static void workload_prediction(int workload_predict)
 			for(pos = head->next; pos != head; pos = pos->next) {
 				data = list_entry(pos ,struct sched_energy_entity, list_item);
 				// predict workload from the statistics.
-				printk("pid:%d, cpu:%d, exeute_start:%u, total_execution:%u, workload:%u\n",data->instance->pid , i, data->execute_start ,data->total_execution, data->workload);
+				//printk("pid:%d, cpu:%d, exeute_start:%u, total_execution:%u, workload:%u\n",data->instance->pid , i, data->execute_start ,data->total_execution, data->workload);
 				if (workload_predict == true)
 				{
 				// for the newly job
@@ -196,28 +213,34 @@ static void workload_prediction(int workload_predict)
 
 static int compare(const void *a, const void *b)
 {
-	const struct sched_energy_entity *ipa = (struct sched_energy_entity *)a;	
-	const struct sched_energy_entity *ipb = (struct sched_energy_entity *)b;	
+	struct sched_energy_entity * const *ippa = a;	
+	struct sched_energy_entity * const *ippb = b;	
+	const struct sched_energy_entity *ipa = *ippa;	
+	const struct sched_energy_entity *ipb = *ippb;	
 	if (ipa->workload > ipb->workload)
-		return 1;
-	if (ipa->workload < ipb->workload)
 		return -1;
+	if (ipa->workload < ipb->workload)
+		return 1;
 	return 0;
 }
 
 static void algo(void)
 {
 	u64 total_workload = 0;
-	int o_freq[NR_CPUS] = {0};
+	unsigned int o_freq[NR_CPUS] = {0};
 	#define Max_jobs 1000
 	struct sched_energy_entity **data = (struct sched_energy_entity **)kmalloc(sizeof(struct sched_energy_entity *)*Max_jobs, __GFP_IO | __GFP_FS);
 	int job_count = 0;
 	struct rq *i_rq;
 	struct list_head *head;
 	struct list_head *pos;
-	int i = 0;
-	int j = 0;
-	int k = 0;
+	int i = 0 ,j = 0, k = 0;
+	#define soft_float 1000000
+	int ptr = 0;
+	int ptr_max = 0;
+	unsigned int pre_load = 0;
+	int o_cpu = 0;
+	int max_freq = 0;
 	for (i = 0 ;i < NR_CPUS; i++) {
 		i_rq = cpu_rq(i);
 		if (i_rq->energy.energy_nr_running != 0) {
@@ -232,6 +255,7 @@ static void algo(void)
 		}
 	}
 	sort(data, job_count, sizeof(struct sched_energy_entity*), compare, NULL);
+#ifdef _sched_debug
 	printk("========= input===========\n");
 	for(i=0;i<NR_CPUS;i++){
 		printk("CPU %d:", i);
@@ -243,12 +267,10 @@ static void algo(void)
 	for(j=0;j<job_count;j++)
 		printk(" %4d", data[j]->workload);
 	printk("\n");
-
-	#define soft_float 1000000
-	int ptr = 0;
-	int ptr_max = 0;
-	unsigned int pre_load = 0;
+#endif
 	for (i = 0; i < NR_CPUS; i++) {
+		int f_total = 0;
+		int a_jp = 0;
 		if (total_workload == 0) {
 			o_freq[i] = 0;
 			continue;
@@ -260,10 +282,10 @@ static void algo(void)
 				((1 * soft_float - pre_load) < (data[ptr]->workload) / (cpu_rq(i)->energy.freq[j] * kHZ / soft_float) ))
 				break;
 		}
-		printk("__debug cpu_rq(i)->energy.freq[j]:%d,data[ptr_max]->workload:%u,total_workload:%u,pre_load:%u\n",cpu_rq(i)->energy.freq[j],data[ptr_max]->workload,total_workload,pre_load);
+		//printk("__debug cpu_rq(i)->energy.freq[j]:%d,data[ptr_max]->workload:%u,total_workload:%llu,pre_load:%u\n",cpu_rq(i)->energy.freq[j],data[ptr_max]->workload,total_workload,pre_load);
 		o_freq[i] = j == 0 ? cpu_rq(i)->energy.freq[j] : cpu_rq(i)->energy.freq[j-1];  	
-		int f_total = o_freq[i] * kHZ;
-		int a_jp = 0;
+		f_total = o_freq[i] * kHZ;
+		a_jp = 0;
 		while ( ptr < job_count ) {
 			int state = 0;
 			if (f_total >= data[ptr]->workload)
@@ -287,6 +309,7 @@ static void algo(void)
 			}
 		}
 	}
+#ifdef _sched_debug
 	printk("=========output===========\n");
 	for(i=0;i<NR_CPUS;i++)
 		printk("CPU:%d freq:%d\n",i , o_freq[i]);
@@ -296,7 +319,20 @@ static void algo(void)
 			printk(" %4d", data[i]->credit[j]);
 		printk("\n");
 	}
+#endif
 	kfree(data);
+
+	// symmetric freq.
+	for(i = 0; i < NR_CPUS; i++) {
+		if (max_freq < o_freq[i]) { 
+			o_cpu = i;
+			max_freq = o_freq[i];
+		}
+	}
+#ifdef _sched_debug
+	printk("o_cpu:%u, max_freq:%u\n", o_cpu, max_freq);
+#endif
+	set_cpu_frequency(o_cpu, max_freq);	
 }
 
 static void main_schedule(int workload_predict)
@@ -304,19 +340,22 @@ static void main_schedule(int workload_predict)
 	u64 slice_start =  cpu_rq(smp_processor_id())->clock_task;
 	struct rq *i_rq;
 	int i = 0;
-	printk("clock: %llu |timeslice:%llu |HZ:%u |workload_predict:%d\n",cpu_rq(smp_processor_id())->clock_task, cpu_rq(smp_processor_id())->energy.timeslice_start ,HZ, workload_predict);
+	int total_job = 0;
+	//printk("clock: %llu |timeslice:%llu |HZ:%u |workload_predict:%d\n",cpu_rq(smp_processor_id())->clock_task, cpu_rq(smp_processor_id())->energy.timeslice_start ,HZ, workload_predict);
 	// update all job data and then use them to predict.
 	for (i = 0 ;i < NR_CPUS; i++) {
 		i_rq = cpu_rq(i);
+		total_job += i_rq->energy.energy_nr_running;
 		if (i_rq->energy.energy_nr_running != 0)
 			update_curr_energy(i_rq);
 		if (workload_predict == true)
 			i_rq->energy.timeslice_start = slice_start;
 	}	
-	if (workload_predict == true)
-		workload_prediction(workload_predict);
-	algo();
-	//set_cpu_frequency(0, cpu_rq(0)->energy.freq[4]);	
+	if (total_job) {
+		if (workload_predict == true)
+			workload_prediction(workload_predict);
+		algo();
+	}
 }
 
 static void task_tick_energy(struct rq *rq, struct task_struct *curr, int queued)
@@ -324,12 +363,15 @@ static void task_tick_energy(struct rq *rq, struct task_struct *curr, int queued
 #ifdef _debug
 		printk("%s\n",__PRETTY_FUNCTION__);
 #endif
-	int cpu = smp_processor_id();
+	//int cpu = smp_processor_id();
 	//printk("%s | cpu:%d, slice:%llu\n",__PRETTY_FUNCTION__, cpu, rq->clock_task - rq->energy.timeslice_start);
 	//over scheduling time slice:
 	if (rq->clock_task - rq->energy.timeslice_start >= NSEC_PER_SEC) {
 		// reschedule because of the time slice 
-		main_schedule(true);
+		if (spin_trylock(&mr_lock)) {
+			main_schedule(true);
+			spin_unlock(&mr_lock);
+		}
 	} // time sharing
 	else if (rq->clock_task - rq->energy.time_sharing >= 30 * USEC_PER_SEC) {
 		//printk("clock: %llu |timeslice:%llu |HZ:%u\n",rq->clock_task, rq->energy.time_sharing ,HZ);

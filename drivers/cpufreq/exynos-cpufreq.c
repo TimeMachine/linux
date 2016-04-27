@@ -218,6 +218,7 @@ static int exynos_target(struct cpufreq_policy *policy,
 	unsigned int new_freq;
 	int ret = 0;
 
+	printk("%s \n",__PRETTY_FUNCTION__);
 	mutex_lock(&cpufreq_lock);
 
 	if (exynos_cpufreq_disable)
