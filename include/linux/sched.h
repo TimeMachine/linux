@@ -1261,8 +1261,8 @@ struct sched_energy_entity {
 	u32 total_execution;
 
 	u32 workload; // prediction
+	u32 dummy_workload;
 	u32 credit[NR_CPUS]; // calculate	
-	int state; // 0: under 1: over
 	struct task_struct *instance;
 	// queue 
 	struct energy_rq *rq_e;

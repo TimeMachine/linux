@@ -10,6 +10,8 @@
 # Normal rules
 #
 error
+arch/arm/boot/Image
+arch/arm/boot/zImage
 .*
 *.o
 *.o.*

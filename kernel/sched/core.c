@@ -3358,6 +3358,11 @@ pick_next_task(struct rq *rq)
 	 * Optimization: we know that if all tasks are in
 	 * the fair class we can call that function directly:
 	 */
+	if (rq->energy.energy_nr_running) {
+		p = energy_sched_class.pick_next_task(rq);
+		if (p)
+			return p;
+	}
 	if (likely(rq->nr_running == rq->cfs.h_nr_running)) {
 		p = fair_sched_class.pick_next_task(rq);
 		if (likely(p))
@@ -4229,10 +4234,10 @@ __setscheduler(struct rq *rq, struct task_struct *p, int policy, int prio)
 	p->normal_prio = normal_prio(p);
 	/* we are holding p->pi_lock already */
 	p->prio = rt_mutex_getprio(p);
-	if (rt_prio(p->prio))
-		p->sched_class = &rt_sched_class;
-	else if(policy == SCHED_ENERGY)
+	if(policy == SCHED_ENERGY)
 		p->sched_class = &energy_sched_class;
+	else if (rt_prio(p->prio))
+		p->sched_class = &rt_sched_class;
 	else
 		p->sched_class = &fair_sched_class;
 	set_load_weight(p);
@@ -4957,6 +4962,7 @@ SYSCALL_DEFINE1(sched_get_priority_max, int, policy)
 	case SCHED_NORMAL:
 	case SCHED_BATCH:
 	case SCHED_IDLE:
+	case SCHED_ENERGY:
 		ret = 0;
 		break;
 	}
@@ -4982,6 +4988,7 @@ SYSCALL_DEFINE1(sched_get_priority_min, int, policy)
 	case SCHED_NORMAL:
 	case SCHED_BATCH:
 	case SCHED_IDLE:
+	case SCHED_ENERGY:
 		ret = 0;
 	}
 	return ret;
