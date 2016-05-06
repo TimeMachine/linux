@@ -1727,6 +1727,7 @@ static void __sched_fork(struct task_struct *p)
 	p->ee.execute_start = 0;
 	p->ee.total_execution = 0;
 	p->ee.instance = p;
+	p->ee.select = 0;
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	INIT_HLIST_HEAD(&p->preempt_notifiers);

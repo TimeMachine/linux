@@ -1257,6 +1257,7 @@ struct sched_rt_entity {
 struct sched_energy_entity {
 	//statistics
 	u32 execute_start;
+	u32 select; // to be executed
 	//u64 timeslice_execution[NR_CPUS];	
 	u32 total_execution;
 
