@@ -1143,6 +1143,7 @@ struct sched_class {
 
 	void (*pre_schedule) (struct rq *this_rq, struct task_struct *task);
 	void (*post_schedule) (struct rq *this_rq);
+	void (*post_schedule_prev) (struct rq *this_rq, struct task_struct *task);
 	void (*task_waking) (struct task_struct *task);
 	void (*task_woken) (struct rq *this_rq, struct task_struct *task);
 
@@ -1258,6 +1259,7 @@ struct sched_energy_entity {
 	//statistics
 	u32 execute_start;
 	u32 select; // to be executed
+	int need_move;
 	int first;
 	//u64 timeslice_execution[NR_CPUS];	
 	u32 total_execution;

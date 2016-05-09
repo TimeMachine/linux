@@ -1729,6 +1729,7 @@ static void __sched_fork(struct task_struct *p)
 	p->ee.instance = p;
 	p->ee.select = 0;
 	p->ee.first = 1;
+	p->ee.need_move = -1;
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	INIT_HLIST_HEAD(&p->preempt_notifiers);
@@ -7139,6 +7140,7 @@ void init_energy_rq(struct rq *rq)
 	e_rq->rq = rq;
 	e_rq->freq = NULL;
 	e_rq->state_number = 0;
+	e_rq->set_freq = -1;
 }
 
 #ifdef CONFIG_CGROUP_SCHED

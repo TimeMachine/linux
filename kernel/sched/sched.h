@@ -317,6 +317,7 @@ struct energy_rq {
 	u64 timeslice_start;
 	u64 time_sharing;
 	unsigned int *freq;
+	int set_freq;
 	int state_number;
 };
 
