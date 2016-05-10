@@ -11,6 +11,7 @@
 static DEFINE_SPINLOCK(mr_lock);
 static DEFINE_SPINLOCK(queue_lock);
 static int need_reschedule = 0;
+static u64 timeslice_start = 0;
 
 extern unsigned int get_stats_table(int cpu, unsigned int **freq);
 //extern void change_governor_userspace(int cpu);
@@ -259,8 +260,8 @@ enqueue_task_energy(struct rq *rq, struct task_struct *p, int flags)
 	if( !(flags == 0 && p->ee.first == 1) ) {
 	//update the new task info.
 		p->ee.workload = rq->energy.freq[rq->energy.state_number / 2] * kHZ;
-		if (rq->energy.timeslice_start == 0)
-			rq->energy.timeslice_start = rq->clock_task;
+		if (timeslice_start == 0)
+			timeslice_start = rq->clock_task;
 		need_reschedule = 1;
 		p->ee.first = 0;
 	}
@@ -510,8 +511,8 @@ static void main_schedule(void)
 		total_job += i_rq->energy.energy_nr_running;
 		if (i_rq->energy.energy_nr_running != 0)
 			update_curr_energy(i_rq);
-			i_rq->energy.timeslice_start = slice_start;
 	}	
+	timeslice_start = slice_start;
 	if (total_job) {
 		workload_prediction();
 		algo();
@@ -528,15 +529,11 @@ static void task_tick_energy(struct rq *rq, struct task_struct *curr, int queued
 		//printk("cpu:%d, %s, pid:%d\n",cpu ,__PRETTY_FUNCTION__, curr->pid);
 #endif
 		//over scheduling time slice:
-		if (rq->clock_task - rq->energy.timeslice_start >= NSEC_PER_SEC || need_reschedule) {
+		if (rq->clock_task - timeslice_start >= NSEC_PER_SEC || need_reschedule) {
 			// reschedule because of the time slice 
 			need_reschedule = 0;
 			main_schedule();
 		}
-		/*else if (curr->ee.need_move != -1) { 
-			rq->energy.time_sharing = rq->clock_task;
-			reschedule(rq->cpu);
-		}*/
 		else if (rq->clock_task - rq->energy.time_sharing >= 30 * USEC_PER_SEC) {
 			// time sharing
 			rq->energy.time_sharing = rq->clock_task;
@@ -588,7 +585,6 @@ const struct sched_class energy_sched_class = {
 #ifdef CONFIG_SMP
 	.select_task_rq		= select_task_rq_energy,
 	.post_schedule      = post_schedule_energy,
-	.post_schedule_prev = post_schedule_prev_energy,
 	.pre_schedule       = pre_schedule_energy,
 #endif
 

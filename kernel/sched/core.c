@@ -7136,7 +7136,6 @@ void init_energy_rq(struct rq *rq)
 	struct energy_rq *e_rq = &rq->energy;
 	INIT_LIST_HEAD(&e_rq->queue);
 	e_rq->energy_nr_running = 0;
-	e_rq->timeslice_start = 0;
 	e_rq->rq = rq;
 	e_rq->freq = NULL;
 	e_rq->state_number = 0;
