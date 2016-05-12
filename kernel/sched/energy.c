@@ -126,13 +126,9 @@ static void post_schedule_energy(struct rq *rq)
 	rq->curr->ee.select = 0;
 }
 
-static void post_schedule_prev_energy(struct rq *rq, struct task_struct *prev)
-{
-}
-
 static void pre_schedule_energy(struct rq *rq, struct task_struct *prev)
 {
-	printk("cpu:%d, %s ,pid:%d ,need_move:%d\n",smp_processor_id(),__PRETTY_FUNCTION__,prev->pid,prev->ee.need_move);
+	//printk("cpu:%d, %s ,pid:%d ,need_move:%d\n",smp_processor_id(),__PRETTY_FUNCTION__,prev->pid,prev->ee.need_move);
 	if (prev->ee.need_move >= 0) {
 		if (prev->on_rq) {
 			printk("[need move] :%d\n",prev->ee.need_move);
@@ -183,7 +179,8 @@ static struct task_struct *pick_next_task_energy(struct rq *rq)
 		for (j = 0; pos != &e_rq->queue; pos = pos->next) {
 			next_ee = list_entry(pos, struct sched_energy_entity, list_item);
 			if (task_cpu(next_ee->instance) != try_cpu[i] && 
-				cpu_rq(task_cpu(next_ee->instance))->curr->pid == next_ee->instance->pid)  
+			   (cpu_rq(task_cpu(next_ee->instance))->curr->pid == next_ee->instance->pid || 
+			    raw_spin_is_locked(&cpu_rq(task_cpu(next_ee->instance))->lock)))
 				continue;
 			if (!i) {
 				//if (next_ee->credit[rq->cpu]) {
@@ -198,7 +195,9 @@ static struct task_struct *pick_next_task_energy(struct rq *rq)
 				find = 1;
 				break;
 			}
-			else if (i && next_ee->instance->pid != cpu_rq(try_cpu[i])->curr->pid &&
+			else if (i && !raw_spin_is_locked(&cpu_rq(try_cpu[i])->lock) && 
+					next_ee->instance->pid != cpu_rq(try_cpu[i])->curr->pid &&
+			//else if (i && !raw_spin_is_locked(&cpu_rq(try_cpu[i])->lock) &&
 					next_ee->select == 0 && next_ee->instance->state == TASK_RUNNING &&
 					next_ee->need_move == -1) {
 				printk("steal | i:%d, next-pid:%d, curr-pid:%d, j:%d\n",try_cpu[i],next_ee->instance->pid, cpu_rq(try_cpu[i])->curr->pid,j);
@@ -207,7 +206,7 @@ static struct task_struct *pick_next_task_energy(struct rq *rq)
 				find = 1;
 				break;
 			}
-			//printk("[debug] cpu:%d try:%d pid:%d loop:%d\n",rq->cpu,try_cpu[i],next_ee->instance->pid,j++);
+			//printk("[pick] cpu:%d try:%d pid:%d loop:%d need_move:%d state:%ld\n",rq->cpu,try_cpu[i],next_ee->instance->pid,j++,next_ee->need_move ,next_ee->instance->state);
 		}
 		if(find == 1) {
 			// To be executed task has put first entry.
@@ -257,10 +256,15 @@ enqueue_task_energy(struct rq *rq, struct task_struct *p, int flags)
 	inc_nr_running(rq);
 	spin_unlock(&queue_lock);	
 
-	if( !(flags == 0 && p->ee.first == 1) ) {
+	if(flags == 0 && p->ee.first == 1) {
 	//update the new task info.
+		int total_job = 0;
 		p->ee.workload = rq->energy.freq[rq->energy.state_number / 2] * kHZ;
-		if (timeslice_start == 0)
+		printk("[enqueue] clock:%llu start:%llu\n",rq->clock_task,timeslice_start);
+		for (i = 0 ;i < NR_CPUS; i++) 
+			total_job += cpu_rq(i)->energy.energy_nr_running;
+
+		if (total_job == 1)
 			timeslice_start = rq->clock_task;
 		need_reschedule = 1;
 		p->ee.first = 0;
@@ -322,6 +326,8 @@ static void workload_prediction(void)
 	struct list_head *head;
 	struct sched_energy_entity *data;
 	struct list_head *pos;
+
+	spin_lock(&queue_lock);	
 	for (i = 0 ;i < NR_CPUS; i++) {
 		i_rq = cpu_rq(i);
 		if (i_rq->energy.energy_nr_running != 0) {
@@ -342,6 +348,8 @@ static void workload_prediction(void)
 			}
 		}
 	}
+
+	spin_unlock(&queue_lock);	
 }
 
 static int compare(const void *a, const void *b)
@@ -374,6 +382,8 @@ static void algo(void)
 	unsigned int pre_load = 0;
 	int o_cpu = 0;
 	int max_freq = 0;
+
+	spin_lock(&queue_lock);	
 	for (i = 0 ;i < NR_CPUS; i++) {
 		i_rq = cpu_rq(i);
 		if (i_rq->energy.energy_nr_running != 0) {
@@ -404,7 +414,6 @@ static void algo(void)
 		printk(" %4d", data[j]->workload);
 	printk("\n");
 #endif
-	spin_lock(&queue_lock);	
 	for (i = 0; i < NR_CPUS; i++) {
 		int f_total = 0;
 		int a_jp = 0;
@@ -433,8 +442,8 @@ static void algo(void)
 			f_total -= a_jp;
 			data[ptr]->credit[i] = a_jp;
 			if (state) {
-				// if task is scheduled to other cpu, task have to move to other queue.
-				if (data[ptr]->credit[data[ptr]->rq_e->rq->cpu] == 0) {
+				if (data[ptr]->credit[data[ptr]->rq_e->rq->cpu] == 0 && data[ptr]->instance->on_rq) {
+					// if task is scheduled to other cpu, task have to move to other queue.
 					printk("[algo] pid:%d ,from:%d ,to:%d\n",data[ptr]->instance->pid,data[ptr]->rq_e->rq->cpu,i_rq->cpu);
 					if (data[ptr]->select == 0 && data[ptr]->instance->pid != data[ptr]->rq_e->rq->curr->pid)
 						if (cpu_rq(task_cpu(data[ptr]->instance))->curr->pid != data[ptr]->instance->pid)
@@ -584,8 +593,8 @@ const struct sched_class energy_sched_class = {
 
 #ifdef CONFIG_SMP
 	.select_task_rq		= select_task_rq_energy,
-	.post_schedule      = post_schedule_energy,
 	.pre_schedule       = pre_schedule_energy,
+	.post_schedule      = post_schedule_energy,
 #endif
 
 	.set_curr_task          = set_curr_task_energy,

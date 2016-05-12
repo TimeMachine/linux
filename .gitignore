@@ -12,6 +12,7 @@
 error
 arch/arm/boot/Image
 arch/arm/boot/zImage
+linux.dump
 .*
 *.o
 *.o.*
