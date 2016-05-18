@@ -171,6 +171,11 @@ u32 notrace cpu_cycle(void)
 	return read_sched_clock();
 }
 
+unsigned long long notrace cycle_to_clock(u32 cyc)
+{
+	return cyc_to_sched_clock(cyc, sched_clock_mask);
+}
+
 void __init sched_clock_postinit(void)
 {
 	/*

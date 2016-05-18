@@ -1260,12 +1260,13 @@ struct sched_energy_entity {
 	u32 select; // to be executed
 	int need_move;
 	int first;
-	//u64 timeslice_execution[NR_CPUS];	
 	u32 total_execution;
 
+	int over_predict; //half-scaling
 	u32 workload; // prediction
 	u32 dummy_workload;
 	u32 credit[NR_CPUS]; // calculate	
+	int split;
 	struct task_struct *instance;
 	// queue 
 	struct energy_rq *rq_e;
@@ -1991,6 +1992,7 @@ static inline int set_cpus_allowed(struct task_struct *p, cpumask_t new_mask)
  */
 extern unsigned long long notrace sched_clock(void);
 extern u32 notrace cpu_cycle(void);
+extern unsigned long long notrace cycle_to_clock(u32 cyc);
 /*
  * See the comment in kernel/sched_clock.c
  */

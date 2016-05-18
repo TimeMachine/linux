@@ -1730,6 +1730,8 @@ static void __sched_fork(struct task_struct *p)
 	p->ee.select = 0;
 	p->ee.first = 1;
 	p->ee.need_move = -1;
+	p->ee.split = 0;
+	p->ee.over_predict = 0;
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	INIT_HLIST_HEAD(&p->preempt_notifiers);
@@ -7328,6 +7330,7 @@ void __init sched_init(void)
 	if (cpu_isolated_map == NULL)
 		zalloc_cpumask_var(&cpu_isolated_map, GFP_NOWAIT);
 #endif
+	init_sched_energy_class();
 	init_sched_fair_class();
 
 	scheduler_running = 1;
