@@ -56,6 +56,7 @@ static void set_cpu_frequency(unsigned int c, unsigned int freq)
 static enum hrtimer_restart sched_period_timer(struct hrtimer *timer)
 {
 	ktime_t ktime;
+	//get_cycles()
 	printk("[period] cycle:%u\n",cpu_cycle());
 
 	ktime = ktime_set(0, NSEC_PER_SEC);
@@ -403,7 +404,7 @@ static void workload_prediction(void)
 				}
 				else if (jiffies_to_cycle(data->total_execution) >= data->workload) {
 					if (data->over_predict) 
-						data->workload = (i_rq->energy.freq[0] + data->workload) / 2;
+						data->workload = (i_rq->energy.freq[0] + data->workload / kHZ) / 2 * kHZ;
 					else
 						data->workload += 100000 * kHZ;
 					data->over_predict++;
@@ -633,12 +634,15 @@ static void task_tick_energy(struct rq *rq, struct task_struct *curr, int queued
 		if (need_reschedule) {
 			need_reschedule = 0;
 			main_schedule(false);
+			spin_unlock(&mr_lock);
+			return;
 		}
 		spin_unlock(&mr_lock);
-		return;
 	}
 	update_credit(curr);
-	if (!spin_is_locked(&mr_lock) && rq->clock_task - rq->energy.time_sharing >= 30 * USEC_PER_SEC) {
+	if (!spin_is_locked(&mr_lock) && 
+		((rq->clock_task - rq->energy.time_sharing >= 30 * USEC_PER_SEC)||
+		curr->ee.credit[rq->cpu] == 0)) {
 		// time sharing
 		rq->energy.time_sharing = rq->clock_task;
 		spin_lock(&queue_lock);	
