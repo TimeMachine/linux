@@ -18,7 +18,7 @@ static u32 freq_now;
 
 // lock by main_schedule
 static DEFINE_SPINLOCK(mr_lock);
-static DEFINE_SPINLOCK(queue_lock);
+static spinlock_t rq_lock[NR_CPUS];
 static int need_reschedule = 0;
 static struct hrtimer hr_timer;
 static int total_job = 0;
@@ -27,6 +27,42 @@ extern unsigned int get_stats_table(int cpu, unsigned int **freq);
 //extern void change_governor_userspace(int cpu);
 extern struct cpufreq_policy *cpufreq_cpu_get(unsigned int cpu);
 static void main_schedule(int workload_predict);
+
+static inline void _all_rq_lock(void)
+{
+	int i = 0;
+	spin_lock(&rq_lock[i]);	
+	for (i = 1; i < NR_CPUS; i++) 
+		spin_lock_nested(&rq_lock[i], i);	
+}
+
+static inline void _all_rq_unlock(void)
+{
+	int i;
+	for (i = 0; i < NR_CPUS; i++) 
+		spin_unlock(&rq_lock[i]);	
+}
+
+static inline void _double_rq_lock(int lock1, int lock2)
+{
+	if (lock1 == lock2)	
+		spin_lock(&rq_lock[lock1]);	
+	else if (lock1 < lock2) {
+		spin_lock(&rq_lock[lock1]);	
+		spin_lock_nested(&rq_lock[lock2], SINGLE_DEPTH_NESTING);	
+	}
+	else {
+		spin_lock(&rq_lock[lock2]);	
+		spin_lock_nested(&rq_lock[lock1], SINGLE_DEPTH_NESTING);
+	}
+}
+
+static inline void _double_rq_unlock(int lock1, int lock2)
+{
+	spin_unlock(&rq_lock[lock1]);	
+	if (lock1 != lock2)	
+		spin_unlock(&rq_lock[lock2]);	
+}
 
 static void get_cpu_frequency(int cpu)
 {
@@ -169,14 +205,15 @@ static void pre_schedule_energy(struct rq *rq, struct task_struct *prev)
 #endif
 	if (prev->ee.need_move >= 0) {
 		if (prev->on_rq) {
+			int move = prev->ee.need_move;
 #ifdef _debug
 			printk("[need move] :%d\n",prev->ee.need_move);
 #endif
-			spin_lock(&queue_lock);	
+			_double_rq_lock(move, task_cpu(prev));
 			move_task_to_rq(cpu_rq(prev->ee.need_move) ,&prev->ee ,0);
 			prev->ee.need_move = -1;
 			reschedule(prev->ee.need_move);
-			spin_unlock(&queue_lock);	
+			_double_rq_unlock(move, task_cpu(prev));
 		}
 		else
 			prev->ee.need_move = -1;
@@ -219,9 +256,9 @@ static struct task_struct *pick_next_task_energy(struct rq *rq)
 
 	for (i = 0; i < 4; i++) {
 		e_rq = &cpu_rq(try_cpu[i])->energy;
-		spin_lock(&queue_lock);
+		_all_rq_lock();
 		if(e_rq->energy_nr_running == 0){
-			spin_unlock(&queue_lock);	
+			_all_rq_unlock();
 			continue;
 		}
 		pos = e_rq->queue.next;
@@ -266,10 +303,10 @@ static struct task_struct *pick_next_task_energy(struct rq *rq)
 			if (task_cpu(next_ee->instance) != try_cpu[i]){
 				set_task_cpu(next_ee->instance, rq->cpu);
 			}
-			spin_unlock(&queue_lock);	
+			_all_rq_unlock();
 			break;
 		}
-		spin_unlock(&queue_lock);	
+		_all_rq_unlock();
 	}
 	if (find == 0) {
 #ifdef _debug
@@ -303,7 +340,7 @@ enqueue_task_energy(struct rq *rq, struct task_struct *p, int flags)
 		freq_now = rq->energy.freq[0];
 #endif
 	}
-	spin_lock(&queue_lock);
+	spin_lock(&rq_lock[rq->cpu]);
 	list_add_tail(&(p->ee.list_item),&(rq->energy.queue));
 	p->ee.rq_e = &rq->energy;
 	rq->energy.energy_nr_running++;
@@ -324,7 +361,7 @@ enqueue_task_energy(struct rq *rq, struct task_struct *p, int flags)
 		need_reschedule = 1;
 		p->ee.first = 0;
 	}
-	spin_unlock(&queue_lock);	
+	spin_unlock(&rq_lock[rq->cpu]);	
 #ifdef _debug
 	printk("[debug en] pid:%d prev->state:%ld flag:%d\n", p->pid, p->state, flags);
 #endif
@@ -338,11 +375,11 @@ dequeue_task_energy(struct rq *rq, struct task_struct *p, int flags)
 #endif
 	update_curr_energy(rq);
 
-	spin_lock(&queue_lock);	
+	spin_lock(&rq_lock[rq->cpu]);
 	list_del(&(p->ee.list_item));
 	rq->energy.energy_nr_running--;
 	dec_nr_running(rq);
-	spin_unlock(&queue_lock);	
+	spin_unlock(&rq_lock[rq->cpu]);	
 
 	if(flags) {
 		if (p->state == TASK_DEAD) {
@@ -366,10 +403,10 @@ static void requeue_task_energy(struct rq *rq, struct task_struct *p)
 
 static void yield_task_energy(struct rq *rq)
 {
-	spin_lock(&queue_lock);	
+	spin_lock(&rq_lock[rq->cpu]);
 	requeue_task_energy(rq,rq->curr);
-	spin_unlock(&queue_lock);	
 	need_reschedule = 1;
+	spin_unlock(&rq_lock[rq->cpu]);	
 }
 
 static void put_prev_task_energy(struct rq *rq, struct task_struct *prev)
@@ -388,7 +425,7 @@ static void workload_prediction(void)
 	struct sched_energy_entity *data;
 	struct list_head *pos;
 
-	spin_lock(&queue_lock);	
+	_all_rq_lock();
 	for (i = 0 ;i < NR_CPUS; i++) {
 		i_rq = cpu_rq(i);
 		if (i_rq->energy.energy_nr_running != 0) {
@@ -423,7 +460,7 @@ static void workload_prediction(void)
 		}
 	}
 
-	spin_unlock(&queue_lock);	
+	_all_rq_unlock();
 }
 
 static int compare(const void *a, const void *b)
@@ -457,7 +494,7 @@ static void algo(int workload_predict)
 	int o_cpu = 0;
 	int max_freq = 0;
 
-	spin_lock(&queue_lock);	
+	_all_rq_lock();
 	for (i = 0 ;i < NR_CPUS; i++) {
 		i_rq = cpu_rq(i);
 		if (i_rq->energy.energy_nr_running != 0) {
@@ -482,7 +519,7 @@ static void algo(int workload_predict)
 		}
 	}
 	if (job_count == 0) {
-		spin_unlock(&queue_lock);	
+		_all_rq_unlock();
 		return;
 	}
 	sort(data, job_count, sizeof(struct sched_energy_entity*), compare, NULL);
@@ -557,7 +594,7 @@ static void algo(int workload_predict)
 			}
 		}
 	}
-	spin_unlock(&queue_lock);	
+	_all_rq_unlock();
 #ifdef _sched_debug
 	printk("=========output===========\n");
 	for(i=0;i<NR_CPUS;i++)
@@ -645,9 +682,9 @@ static void task_tick_energy(struct rq *rq, struct task_struct *curr, int queued
 		curr->ee.credit[rq->cpu] == 0)) {
 		// time sharing
 		rq->energy.time_sharing = rq->clock_task;
-		spin_lock(&queue_lock);	
+		spin_lock(&rq_lock[rq->cpu]);	
 		requeue_task_energy(rq,curr);
-		spin_unlock(&queue_lock);	
+		spin_unlock(&rq_lock[rq->cpu]);	
 		reschedule(rq->cpu);
 	}
 }
@@ -705,6 +742,9 @@ const struct sched_class energy_sched_class = {
 
 __init void init_sched_energy_class(void)
 {
+	int i;
 	hrtimer_init(&hr_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	hr_timer.function = sched_period_timer;
+	for (i = 0; i < NR_CPUS; i++) 
+		rq_lock[i] = __SPIN_LOCK_UNLOCKED(rq_lock[i]);
 }

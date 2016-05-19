@@ -1267,6 +1267,7 @@ struct sched_energy_entity {
 	u32 dummy_workload;
 	u32 credit[NR_CPUS]; // calculate	
 	int split;
+	int alpha;
 	struct task_struct *instance;
 	// queue 
 	struct energy_rq *rq_e;
