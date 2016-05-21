@@ -5,6 +5,7 @@
 #include <linux/hrtimer.h>
 #include <linux/ktime.h>
 //#define _debug
+#define _debug_pick
 #define _sched_debug
 #define kHZ 1000
 #define odroid_xu
@@ -89,6 +90,20 @@ static void set_cpu_frequency(unsigned int c, unsigned int freq)
 	cpufreq_cpu_put(policy);
 }
 
+static void reschedule(int cpu)
+{
+	struct rq *i_rq = cpu_rq(cpu);
+#ifdef _debug_pick
+		printk("resched %d, pid:%d\n",cpu,i_rq->curr->pid);
+#endif
+	if (cpu == smp_processor_id() && raw_spin_is_locked(&i_rq->lock))
+		resched_task(i_rq->curr);
+	else if(cpu != smp_processor_id() && i_rq->curr == i_rq->idle) 
+		wake_up_idle_cpu(cpu);
+	else
+		resched_cpu(cpu);
+}
+
 static enum hrtimer_restart sched_period_timer(struct hrtimer *timer)
 {
 	ktime_t ktime;
@@ -105,6 +120,14 @@ static enum hrtimer_restart sched_period_timer(struct hrtimer *timer)
 	hrtimer_forward_now(timer, ktime);
 	
 	return HRTIMER_RESTART;
+}
+
+static enum hrtimer_restart sched_resched_timer(struct hrtimer *timer)
+{
+	struct energy_rq *ee = container_of(timer, struct energy_rq, hr_timer);	
+	printk("[timer resched] cycle:%u\n",cpu_cycle());
+	reschedule(ee->rq->cpu);
+	return HRTIMER_NORESTART;
 }
 
 static void update_credit(struct task_struct *curr)
@@ -150,18 +173,6 @@ static inline int on_energy_rq(struct sched_energy_entity *ee)
     return !list_empty(&ee->list_item);
 }
 
-static void reschedule(int cpu)
-{
-	struct rq *i_rq = cpu_rq(cpu);
-	//if (cpu == smp_processor_id()) 
-	if (cpu == smp_processor_id() && raw_spin_is_locked(&i_rq->lock))
-		resched_task(i_rq->curr);
-	//else if(i_rq->curr == i_rq->idle) 
-	//	wake_up_idle_cpu(cpu);
-	else
-		resched_cpu(cpu);
-}
-
 static void move_task_to_rq(struct rq *rq, struct sched_energy_entity *task ,int set)
 {
 	if (task_contributes_to_load(task->instance))
@@ -170,11 +181,9 @@ static void move_task_to_rq(struct rq *rq, struct sched_energy_entity *task ,int
 	task->rq_e->energy_nr_running--;
 	dec_nr_running(task->rq_e->rq);
 	
-	//printk("before move pid:%d energy_nr:%lu nr:%lu task_contributes_to_load:%d\n",task->instance->pid, task->rq_e->energy_nr_running, task->rq_e->rq->nr_running, task_contributes_to_load(task->instance));
-	//deactivate_task(task->rq_e->rq, task->instance, 1);
+	printk("before move pid:%d energy_nr:%lu nr:%lu task_contributes_to_load:%d\n",task->instance->pid, task->rq_e->energy_nr_running, task->rq_e->rq->nr_running, task_contributes_to_load(task->instance));
 	if (set)
 		set_task_cpu(task->instance, rq->cpu);
-	//activate_task(rq, task->instance, 1);
 	
 	if (task_contributes_to_load(task->instance))
 		rq->nr_uninterruptible--;
@@ -183,7 +192,7 @@ static void move_task_to_rq(struct rq *rq, struct sched_energy_entity *task ,int
 	task->rq_e->energy_nr_running++;
 	inc_nr_running(rq);
 	
-	//printk("after move pid:%d energy_nr:%lu nr:%lu task_contributes_to_load:%d\n",task->instance->pid, task->rq_e->energy_nr_running, task->rq_e->rq->nr_running, task_contributes_to_load(task->instance));
+	printk("after move pid:%d energy_nr:%lu nr:%lu task_contributes_to_load:%d\n",task->instance->pid, task->rq_e->energy_nr_running, task->rq_e->rq->nr_running, task_contributes_to_load(task->instance));
 }
 
 #ifdef CONFIG_SMP
@@ -203,20 +212,29 @@ static void pre_schedule_energy(struct rq *rq, struct task_struct *prev)
 #ifdef _debug
 	printk("cpu:%d, %s ,pid:%d ,need_move:%d\n",smp_processor_id(),__PRETTY_FUNCTION__,prev->pid,prev->ee.need_move);
 #endif
-	if (prev->ee.need_move >= 0) {
-		if (prev->on_rq) {
-			int move = prev->ee.need_move;
-#ifdef _debug
-			printk("[need move] :%d\n",prev->ee.need_move);
+	if (prev->ee.need_move < 0 && 
+		prev->on_rq &&
+		rq->cpu == task_cpu(prev) && 
+		prev->ee.split && 
+		prev->ee.credit[rq->cpu] == 0) {
+		int move = -1;
+		int near[2];
+		int i;
+		near[0] = (rq->cpu - 1 + NR_CPUS) % NR_CPUS; 
+		near[1] = (rq->cpu + 1) % NR_CPUS; 
+		for (i = 0; i < 2; i++) {
+			if (prev->ee.credit[near[i]])
+				move = near[i];
+		}
+		if (move >= 0) {
+#ifdef _debug_pick
+			printk("[need move] :%d\n",move);
 #endif
 			_double_rq_lock(move, task_cpu(prev));
-			move_task_to_rq(cpu_rq(prev->ee.need_move) ,&prev->ee ,0);
-			prev->ee.need_move = -1;
-			reschedule(prev->ee.need_move);
+			move_task_to_rq(cpu_rq(move) ,&prev->ee ,0);
+			reschedule(move);
 			_double_rq_unlock(move, task_cpu(prev));
 		}
-		else
-			prev->ee.need_move = -1;
 	}
 
 	if (unlikely(rq->energy.set_freq != -1)) {	
@@ -244,6 +262,8 @@ static struct task_struct *pick_next_task_energy(struct rq *rq)
 	struct list_head *pos;
 	int find = 0, i = 0, j = 0;
 	int try_cpu[4] = {0};
+	int next_ee_cpu = 0;
+	int retry = 0;
 	/*
 	 * Priority : split task -> non-split task -> other CPU run queue
 	 * try_cpu  :		0				1			    2 , 3
@@ -258,80 +278,104 @@ static struct task_struct *pick_next_task_energy(struct rq *rq)
 		e_rq = &cpu_rq(try_cpu[i])->energy;
 		_all_rq_lock();
 		if(e_rq->energy_nr_running == 0){
+			if (rq->curr->policy == 6)
+				printk("[debug pick energy_nr_running=0] cpu:%d i:%d \n",rq->cpu,i);
 			_all_rq_unlock();
 			continue;
 		}
 		pos = e_rq->queue.next;
 		for (j = 0; pos != &e_rq->queue; pos = pos->next) {
 			next_ee = list_entry(pos, struct sched_energy_entity, list_item);
-			if (task_cpu(next_ee->instance) != try_cpu[i] && 
-			   (cpu_rq(task_cpu(next_ee->instance))->curr->pid == next_ee->instance->pid || 
-			    raw_spin_is_locked(&cpu_rq(task_cpu(next_ee->instance))->lock)))
-				continue;
+			next_ee_cpu = task_cpu(next_ee->instance);
+			printk("[debug pick] cpu:%d pid:%d i:%d %d %d %d %d\n",rq->cpu,next_ee->instance->pid,i,!next_ee->credit[rq->cpu],next_ee->instance->state != TASK_RUNNING,next_ee->select == 1,next_ee_cpu != try_cpu[i] &&(cpu_rq(next_ee_cpu)->curr->pid == next_ee->instance->pid));
 			if (!next_ee->credit[rq->cpu])
 				continue;
-			if (i <= 1) {
-				if (next_ee->need_move != -1) {
-					pos = pos->next;
-					move_task_to_rq(cpu_rq(next_ee->need_move) ,next_ee ,0);
-					next_ee->need_move = -1;
-					reschedule(next_ee->need_move);
-					pos = pos->prev;
-					continue;
+
+			if (next_ee->instance->state != TASK_RUNNING)
+				continue;
+
+			if (next_ee->select == 1)
+				continue;
+
+			if (next_ee->need_move >= 0 && next_ee->need_move != rq->cpu)
+				continue;
+
+			if (next_ee_cpu != try_cpu[i] && 
+					(cpu_rq(next_ee_cpu)->curr->pid == next_ee->instance->pid)) { 
+				if (i == 0 && next_ee->credit[rq->cpu]) {
+					printk("[pick fail] pid:%d cpu:%d next_ee_cpu:%d try_cpu:%d curr_pid:%d locked:%d\n", next_ee->instance->pid,rq->cpu,next_ee_cpu,try_cpu[i],cpu_rq(next_ee_cpu)->curr->pid,raw_spin_is_locked(&cpu_rq(next_ee_cpu)->lock));
+					// if we not found any task, we will try to pick again by reschedule.
+					retry = 1;
 				}
+				continue;
+			}
+
+			if (i <= 1) {
 				if ((i == 0 && next_ee->split) || i == 1) {
 					find = 1;
+					if (next_ee_cpu != rq->cpu) {
+						set_task_cpu(next_ee->instance, rq->cpu);
+					}
 					break;
 				}
 			}
-			else if (!raw_spin_is_locked(&cpu_rq(try_cpu[i])->lock) && 
-					next_ee->instance->pid != cpu_rq(try_cpu[i])->curr->pid &&
-					next_ee->select == 0 && next_ee->instance->state == TASK_RUNNING &&
-					next_ee->need_move == -1) {
+			//else if (!raw_spin_is_locked(&cpu_rq(try_cpu[i])->lock) && 
+			else if (next_ee->instance->pid != cpu_rq(try_cpu[i])->curr->pid) {
 				printk("steal | i:%d, next-pid:%d, curr-pid:%d, j:%d\n",try_cpu[i],next_ee->instance->pid, cpu_rq(try_cpu[i])->curr->pid,j);
 				//steal other cpu run queue.
 				move_task_to_rq(rq ,next_ee ,1);
 				find = 1;
 				break;
 			}
-			//printk("[pick] cpu:%d try:%d pid:%d loop:%d need_move:%d state:%ld\n",rq->cpu,try_cpu[i],next_ee->instance->pid,j++,next_ee->need_move ,next_ee->instance->state);
-		}
-		if(find == 1) {
-			// To be executed task has put first entry.
-			next_ee->select = 1;
-			printk("[find] pid:%d tsak_cpu:%d cpu:%d credit:%u\n",next_ee->instance->pid ,task_cpu(next_ee->instance), rq->cpu, next_ee->credit[rq->cpu]);
-			if (task_cpu(next_ee->instance) != try_cpu[i]){
-				set_task_cpu(next_ee->instance, rq->cpu);
+			printk("[picking] cpu:%d try:%d pid:%d loop:%d need_move:%d state:%ld\n",rq->cpu,try_cpu[i],next_ee->instance->pid,j++,next_ee->need_move ,next_ee->instance->state);
+			}
+
+			if(find == 1) {
+				// To be executed task has put first entry.
+				next_ee->select = 1;
+				next_ee->need_move = -1;
+				_all_rq_unlock();
+				break;
 			}
 			_all_rq_unlock();
-			break;
 		}
-		_all_rq_unlock();
-	}
-	if (find == 0) {
-#ifdef _debug
-		if (rq->curr->policy == 6)
-			printk("[pick NULL] cpu:%d \n",smp_processor_id());
+		if (find == 0) {
+#ifdef _debug_pick
+			if (rq->curr->policy == 6)
+				printk("[pick NULL] cpu:%d \n",smp_processor_id());
 #endif
-		return NULL;
-	}
-	next = container_of(next_ee, struct task_struct, ee);
-	next->se.exec_start = rq->clock_task;
-	next->ee.execute_start = cpu_cycle();
-	rq->post_schedule = 1;
-#ifdef _debug
-	printk("cpu:%d, %s ,pid:%d,end\n",smp_processor_id(),__PRETTY_FUNCTION__,next->pid);
+			if (retry == 1) {
+				ktime_t ktime;
+				rq->energy.hr_timer.function = sched_resched_timer;
+				ktime = ktime_set(0, 5 * NSEC_PER_MSEC);
+				hrtimer_start( &rq->energy.hr_timer, ktime, HRTIMER_MODE_REL);
+			}
+			return NULL;
+		}
+		next = container_of(next_ee, struct task_struct, ee);
+		next->se.exec_start = rq->clock_task;
+		next->ee.execute_start = cpu_cycle();
+		rq->post_schedule = 1;
+#ifdef _debug_pick
+		printk("[%s] cpu:%d pid:%d credit:%u\n",__PRETTY_FUNCTION__,rq->cpu,next->pid, next->ee.credit[rq->cpu]);
 #endif
-	return next;
-}
+		return next;
+	}
 
 static void
 enqueue_task_energy(struct rq *rq, struct task_struct *p, int flags)
 {
 	int i = 0;
+	int cpu = rq->cpu;
+	struct rq *true_rq;
 #ifdef _debug
 	printk("cpu:%d, %s ,pid:%d begin\n",smp_processor_id(),__PRETTY_FUNCTION__,p->pid);
 #endif
+
+	if (p->ee.need_move != -1)
+		cpu = p->ee.need_move;
+	true_rq = cpu_rq(cpu);
+
 	// for the first time (init cpu freq)
 	if ( unlikely(rq->energy.freq == NULL) ) {
 		for (i = 0; i < NR_CPUS; i++)  
@@ -340,16 +384,16 @@ enqueue_task_energy(struct rq *rq, struct task_struct *p, int flags)
 		freq_now = rq->energy.freq[0];
 #endif
 	}
-	spin_lock(&rq_lock[rq->cpu]);
-	list_add_tail(&(p->ee.list_item),&(rq->energy.queue));
-	p->ee.rq_e = &rq->energy;
-	rq->energy.energy_nr_running++;
-	inc_nr_running(rq);
+	spin_lock(&rq_lock[cpu]);
+	list_add_tail(&(p->ee.list_item),&(true_rq->energy.queue));
+	p->ee.rq_e = &true_rq->energy;
+	true_rq->energy.energy_nr_running++;
+	inc_nr_running(true_rq);
 
 	if(flags == 0 && p->ee.first == 1) {
 	//update the new task info.
 		p->ee.workload = rq->energy.freq[rq->energy.state_number / 2] * kHZ;
-		p->ee.credit[rq->cpu] = cycle_to_jiffies(p->ee.workload, p->ee.workload);
+		p->ee.credit[rq->cpu] = cycle_to_jiffies(p->ee.workload, freq_now);
 		printk("[enqueue] new job pid:%d, total_job:%d\n",p->pid, total_job);
 		total_job++;
 	
@@ -361,7 +405,7 @@ enqueue_task_energy(struct rq *rq, struct task_struct *p, int flags)
 		need_reschedule = 1;
 		p->ee.first = 0;
 	}
-	spin_unlock(&rq_lock[rq->cpu]);	
+	spin_unlock(&rq_lock[cpu]);	
 #ifdef _debug
 	printk("[debug en] pid:%d prev->state:%ld flag:%d\n", p->pid, p->state, flags);
 #endif
@@ -370,16 +414,23 @@ enqueue_task_energy(struct rq *rq, struct task_struct *p, int flags)
 static void
 dequeue_task_energy(struct rq *rq, struct task_struct *p, int flags)
 {
+	int cpu = rq->cpu;
+	struct rq *true_rq;
 #ifdef _debug
 	printk("cpu:%d, %s ,pid:%d begin\n",smp_processor_id(),__PRETTY_FUNCTION__,p->pid);
 #endif
-	update_curr_energy(rq);
+	if (p->ee.need_move != -1)
+		cpu = p->ee.need_move;
+	true_rq = cpu_rq(cpu);
 
-	spin_lock(&rq_lock[rq->cpu]);
+	update_curr_energy(true_rq);
+
+	spin_lock(&rq_lock[cpu]);
 	list_del(&(p->ee.list_item));
-	rq->energy.energy_nr_running--;
-	dec_nr_running(rq);
-	spin_unlock(&rq_lock[rq->cpu]);	
+	true_rq->energy.energy_nr_running--;
+	dec_nr_running(true_rq);
+	p->ee.select = 0;
+	spin_unlock(&rq_lock[cpu]);	
 
 	if(flags) {
 		if (p->state == TASK_DEAD) {
@@ -501,7 +552,6 @@ static void algo(int workload_predict)
 			head = &i_rq->energy.queue;
 			for(pos = head->next; pos != head; pos = pos->next) {
 				data[job_count] = list_entry(pos ,struct sched_energy_entity, list_item);
-				//if (data[job_count]->instance->state == TASK_RUNNING) {
 				if (data[job_count]->instance->state == TASK_RUNNING && 
 					data[job_count]->workload > jiffies_to_cycle(data[job_count]->total_execution)) {
 					if (workload_predict)
@@ -572,16 +622,17 @@ static void algo(int workload_predict)
 							move_task_to_rq(i_rq ,data[ptr] ,1);
 						else
 							data[ptr]->need_move = i;
-							//move_task_to_rq(i_rq ,data[ptr] ,0);
+							move_task_to_rq(i_rq ,data[ptr] ,0);
 					}
 					else {
 						data[ptr]->need_move = i;
+						move_task_to_rq(i_rq ,data[ptr] ,0);
 					}
 					printk("[algo] select:%d from_pid:%d true_pid:%d\n",data[ptr]->select,data[ptr]->rq_e->rq->curr->pid,cpu_rq(task_cpu(data[ptr]->instance))->curr->pid);
 				}
 				ptr++;
 				ptr_max = ptr;
-				pre_load = 1 * soft_float;
+				pre_load = 0;
 			}
 			else {
 				data[ptr]->dummy_workload -= a_jp;
@@ -590,8 +641,9 @@ static void algo(int workload_predict)
 				if (ptr + 1 < job_count && 
 					data[ptr]->dummy_workload < data[ptr+1]->dummy_workload)
 					ptr_max++;
-				break;
 			}
+			if (!f_total)
+				break;
 		}
 	}
 	_all_rq_unlock();
@@ -623,9 +675,6 @@ static void algo(int workload_predict)
 
 	for (i = 0 ;i < NR_CPUS; i++) {
 		i_rq = cpu_rq(i);
-#ifdef _sched_debug
-		printk("resched %d, pid:%d\n",i,i_rq->curr->pid);
-#endif
 		if (i_rq->curr->ee.credit[i] == 0){
 			reschedule(i);
 		}
@@ -637,8 +686,6 @@ static void main_schedule(int workload_predict)
 {
 	struct rq *i_rq;
 	int i = 0;
-	//printk("clock: %llu |timeslice:%llu |HZ:%u |workload_predict:%d\n",cpu_rq(smp_processor_id())->clock_task, cpu_rq(smp_processor_id())->energy.timeslice_start ,HZ, workload_predict);
-	//preempt_disable();
 	// update all job data and then use them to predict.
 	for (i = 0 ;i < NR_CPUS; i++) {
 		i_rq = cpu_rq(i);
@@ -648,7 +695,6 @@ static void main_schedule(int workload_predict)
 	if (total_job) {
 		if (workload_predict == true) 
 			workload_prediction();
-		//printk("[main_schedule] algo start\n");
 		algo(workload_predict);
 	}
 }
@@ -659,15 +705,6 @@ static void task_tick_energy(struct rq *rq, struct task_struct *curr, int queued
 #ifdef _debug
 		//printk("cpu:%d, %s, pid:%d\n",smp_processor_id() ,__PRETTY_FUNCTION__, curr->pid);
 #endif
-		//over scheduling time slice:
-		/*if (rq->clock_task - timeslice_start >= NSEC_PER_SEC) {
-			//printk("[tick] over 1s.\n");
-			// reschedule because of the time slice 
-			need_reschedule = 0;
-			main_schedule(true);
-			timeslice_start = rq->clock_task;
-		}*/
-			//printk("[tick] need_reschedule\n");
 		if (need_reschedule) {
 			need_reschedule = 0;
 			main_schedule(false);
@@ -682,9 +719,11 @@ static void task_tick_energy(struct rq *rq, struct task_struct *curr, int queued
 		curr->ee.credit[rq->cpu] == 0)) {
 		// time sharing
 		rq->energy.time_sharing = rq->clock_task;
-		spin_lock(&rq_lock[rq->cpu]);	
-		requeue_task_energy(rq,curr);
-		spin_unlock(&rq_lock[rq->cpu]);	
+		if (curr->ee.need_move == -1) {
+			spin_lock(&rq_lock[rq->cpu]);	
+			requeue_task_energy(rq,curr);
+			spin_unlock(&rq_lock[rq->cpu]);	
+		}
 		reschedule(rq->cpu);
 	}
 }

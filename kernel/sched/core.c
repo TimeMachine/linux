@@ -3434,7 +3434,8 @@ need_resched:
 
 	pre_schedule(rq, prev);
 
-	if (unlikely(!rq->nr_running))
+	if (prev->policy != 6 && unlikely(!rq->nr_running))
+	//if (unlikely(!rq->nr_running))
 		idle_balance(cpu, rq);
 
 	put_prev_task(rq, prev);
@@ -7143,6 +7144,7 @@ void init_energy_rq(struct rq *rq)
 	e_rq->freq = NULL;
 	e_rq->state_number = 0;
 	e_rq->set_freq = -1;
+	hrtimer_init(&e_rq->hr_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 }
 
 #ifdef CONFIG_CGROUP_SCHED

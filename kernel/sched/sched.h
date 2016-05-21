@@ -319,6 +319,7 @@ struct energy_rq {
 	unsigned int *freq;
 	int set_freq;
 	int state_number;
+	struct hrtimer hr_timer;
 };
 
 #ifdef CONFIG_SMP
