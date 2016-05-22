@@ -291,7 +291,7 @@ static struct task_struct *pick_next_task_energy(struct rq *rq)
 		for (j = 0; pos != &e_rq->queue; pos = pos->next) {
 			next_ee = list_entry(pos, struct sched_energy_entity, list_item);
 			next_ee_cpu = task_cpu(next_ee->instance);
-			printk("[debug pick] cpu:%d pid:%d i:%d nr:%lu %d %d %d %d %d\n",rq->cpu,next_ee->instance->pid,i,e_rq->energy_nr_running,!next_ee->credit[rq->cpu],next_ee->instance->state != TASK_RUNNING,next_ee->select == 1,next_ee->need_move >= 0 && next_ee->need_move != rq->cpu,next_ee_cpu != try_cpu[i] &&(cpu_rq(next_ee_cpu)->curr->pid == next_ee->instance->pid));
+			//printk("[debug pick] cpu:%d pid:%d i:%d nr:%lu %d %d %d %d %d\n",rq->cpu,next_ee->instance->pid,i,e_rq->energy_nr_running,!next_ee->credit[rq->cpu],next_ee->instance->state != TASK_RUNNING,next_ee->select == 1,next_ee->need_move >= 0 && next_ee->need_move != rq->cpu,next_ee_cpu != try_cpu[i] &&(cpu_rq(next_ee_cpu)->curr->pid == next_ee->instance->pid));
 			if (!next_ee->credit[rq->cpu])
 				continue;
 
@@ -307,7 +307,7 @@ static struct task_struct *pick_next_task_energy(struct rq *rq)
 			if (next_ee_cpu != try_cpu[i] && 
 					(cpu_rq(next_ee_cpu)->curr->pid == next_ee->instance->pid)) { 
 				if (i == 0 && next_ee->credit[rq->cpu]) {
-					printk("[pick fail] pid:%d cpu:%d next_ee_cpu:%d try_cpu:%d curr_pid:%d locked:%d\n", next_ee->instance->pid,rq->cpu,next_ee_cpu,try_cpu[i],cpu_rq(next_ee_cpu)->curr->pid,raw_spin_is_locked(&cpu_rq(next_ee_cpu)->lock));
+					//printk("[pick fail] pid:%d cpu:%d next_ee_cpu:%d try_cpu:%d curr_pid:%d locked:%d\n", next_ee->instance->pid,rq->cpu,next_ee_cpu,try_cpu[i],cpu_rq(next_ee_cpu)->curr->pid,raw_spin_is_locked(&cpu_rq(next_ee_cpu)->lock));
 					// if we not found any task, we will try to pick again by reschedule.
 					retry = 1;
 				}
@@ -331,7 +331,7 @@ static struct task_struct *pick_next_task_energy(struct rq *rq)
 				find = 1;
 				break;
 			}
-			printk("[picking] cpu:%d try:%d pid:%d loop:%d need_move:%d state:%ld\n",rq->cpu,try_cpu[i],next_ee->instance->pid,j++,next_ee->need_move ,next_ee->instance->state);
+			//printk("[picking] cpu:%d try:%d pid:%d loop:%d need_move:%d state:%ld\n",rq->cpu,try_cpu[i],next_ee->instance->pid,j++,next_ee->need_move ,next_ee->instance->state);
 		}
 
 		if(find == 1) {
@@ -617,8 +617,17 @@ static void algo(int workload_predict)
 		total_workload = 0;
 		for (; j >= 0; j--) {
 			if (total_workload + data[j]->dummy_workload > 
-				 (u64)cpu_rq(base)->energy.freq[0] * core_count * kHZ)
+				(u64)cpu_rq(base)->energy.freq[0] * core_count * kHZ) {
+				if (k == 1) {
+					//over big cluster workload. Given tasks as more as possible.
+					data[j]->dummy_workload = (u64)cpu_rq(base)->energy.freq[0] * core_count * kHZ - total_workload;
+					total_workload = (u64)cpu_rq(base)->energy.freq[0] * core_count * kHZ;
+					cluster_job++;
+					sort(data + j, cluster_job, sizeof(struct sched_energy_entity*), compare, NULL);
+					j--;
+				}
 				break;
+			}
 			total_workload += data[j]->dummy_workload;
 			cluster_job++;
 		}
@@ -636,9 +645,8 @@ static void algo(int workload_predict)
 				continue;
 			}
 			for (j = 0; j < i_rq->energy.state_number; j++) {
-				BUG_ON(ptr_max >= cluster_job);
 				if (((u64) i_rq->energy.freq[j] * kHZ < data[ptr_max]->dummy_workload) ||
-					((u64) i_rq->energy.freq[j] * kHZ * (core_count - i) < total_workload) ||
+					((u64) i_rq->energy.freq[j] * kHZ * (base + core_count - i) < total_workload) ||
 					((1 * soft_float - pre_load) < (data[ptr]->dummy_workload) / (i_rq->energy.freq[j] * kHZ / soft_float) ))
 					break;
 			}
