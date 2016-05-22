@@ -600,7 +600,7 @@ static void algo(int workload_predict)
 	}
 	printk("job workload:");
 	for(j=0;j<job_count;j++)
-		printk("  (%d) %4d", data[j]->instance->pid, data[j]->dummy_workload);
+		printk("  (%d) %4d %d|", data[j]->instance->pid, data[j]->dummy_workload, data[j]->alpha);
 	printk("\n");
 #endif
 	for (i = 0,k = 0; k < 2; k++) {
@@ -616,18 +616,10 @@ static void algo(int workload_predict)
 		cluster_job = 0;
 		total_workload = 0;
 		for (; j >= 0; j--) {
+			//over big cluster workload. Given tasks as more as possible.
 			if (total_workload + data[j]->dummy_workload > 
-				(u64)cpu_rq(base)->energy.freq[0] * core_count * kHZ) {
-				if (k == 1) {
-					//over big cluster workload. Given tasks as more as possible.
-					data[j]->dummy_workload = (u64)cpu_rq(base)->energy.freq[0] * core_count * kHZ - total_workload;
-					total_workload = (u64)cpu_rq(base)->energy.freq[0] * core_count * kHZ;
-					cluster_job++;
-					sort(data + j, cluster_job, sizeof(struct sched_energy_entity*), compare, NULL);
-					j--;
-				}
+				(u64)cpu_rq(base)->energy.freq[0] * core_count * kHZ && k == 0) 
 				break;
-			}
 			total_workload += data[j]->dummy_workload;
 			cluster_job++;
 		}

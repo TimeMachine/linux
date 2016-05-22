@@ -858,4 +858,6 @@ asmlinkage long sys_process_vm_writev(pid_t pid,
 				      unsigned long riovcnt,
 				      unsigned long flags);
 
+asmlinkage long sys_sched_energy_set_alpha(int alpha);
+
 #endif

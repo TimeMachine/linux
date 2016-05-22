@@ -87,6 +87,8 @@
 #define CREATE_TRACE_POINTS
 #include <trace/events/sched.h>
 
+static int sched_energy_alpha = 1;
+
 void start_bandwidth_timer(struct hrtimer *period_timer, ktime_t period)
 {
 	unsigned long delta;
@@ -1732,7 +1734,12 @@ static void __sched_fork(struct task_struct *p)
 	p->ee.need_move = -1;
 	p->ee.split = 0;
 	p->ee.over_predict = 0;
-	p->ee.alpha = 1;
+	if (sched_energy_alpha != 1) {
+		p->ee.alpha = sched_energy_alpha;
+		sched_energy_alpha = 1;
+	}
+	else
+		p->ee.alpha = 1;
 
 #ifdef CONFIG_PREEMPT_NOTIFIERS
 	INIT_HLIST_HEAD(&p->preempt_notifiers);
@@ -5044,6 +5051,15 @@ SYSCALL_DEFINE2(sched_rr_get_interval, pid_t, pid,
 out_unlock:
 	rcu_read_unlock();
 	return retval;
+}
+
+// energy-credit scheduler system call.
+SYSCALL_DEFINE1(sched_energy_set_alpha, int, alpha)
+{
+	if (alpha < 1)
+		return -EINVAL;
+	sched_energy_alpha = alpha;
+	return 0;
 }
 
 static const char stat_nam[] = TASK_STATE_TO_CHAR_STR;
